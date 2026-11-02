@@ -136,7 +136,8 @@ struct Config {
     std::wstring args;
     std::wstring appid = L"400750";
     std::wstring soundHover, soundClick;   // "embedded", "none", or a .wav path
-    std::vector<std::wstring> requireMods; // mod folder names to enable in the profile before launch
+    std::vector<std::wstring> requireMods; // mods to enable before launch, as options.set names (found by FindMarkedMods)
+    std::wstring modsMarker = L"[INDOMITUS_MOD_LAUNCHER]";   // ini: mods_marker= (text in a mod.info {desc ""})
     bool         modsExclusive = false;    // true = enable ONLY those
     std::wstring modsProfile;              // profile folder id; empty = most recently used
     bool         showModFolderButton = true; // ini: show_mod_folder_button=
@@ -637,8 +638,75 @@ static bool EnsureProfileBackup(const std::wstring& opt, const std::string& text
     return false;
 }
 
+// ---- which mods: every mod whose mod.info has the marker in its {desc "..."}
+// The game lists mods in options.set by these names (game.log "Mod: activate mod ..."):
+//   <game>\mods\<Folder>\mod.info                                 -> "<folder>"    (lower case)
+//   <library>\steamapps\workshop\content\<appid>\<id>\mod.info     -> "mod_<id>"   (Steam Workshop)
+
+static std::string AsciiLower(std::string s)
+{
+    for (auto& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return s;
+}
+
+static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& markerLower)
+{
+    std::string t = ReadFileA(modInfo);
+    if (t.size() >= 2 && (unsigned char)t[0] == 0xFF && (unsigned char)t[1] == 0xFE) {   // UTF-16 LE file
+        std::wstring w;
+        for (size_t i = 2; i + 1 < t.size(); i += 2) w += (wchar_t)((unsigned char)t[i] | ((unsigned char)t[i + 1] << 8));
+        t = Utf8(w);
+    }
+    for (size_t p = 0; (p = t.find("{desc", p)) != std::string::npos; p += 5) {
+        size_t q1 = p + 5;
+        while (q1 < t.size() && (t[q1] == ' ' || t[q1] == '\t' || t[q1] == '\r' || t[q1] == '\n')) ++q1;
+        if (q1 >= t.size() || t[q1] != '"') continue;              // "{description" or similar, not {desc "..."}
+        size_t q2 = t.find('"', q1 + 1);
+        if (q2 == std::string::npos) break;
+        if (AsciiLower(t.substr(q1 + 1, q2 - q1 - 1)).find(markerLower) != std::string::npos) return true;
+    }
+    return false;
+}
+
+static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerLower, std::vector<std::wstring>& out)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+        std::wstring name = fd.cFileName;
+        bool valid = true;   // the game rejects folder names like "- bckp"; never put those in the profile
+        for (wchar_t c : name) if (!(iswalnum(c) || c == L'_' || c == L'-')) { valid = false; break; }
+        if (!valid) continue;
+        std::wstring info = dir + L"\\" + name + L"\\mod.info";
+        if (!PathFileExistsW(info.c_str()) || !ModInfoHasMarker(info, markerLower)) continue;
+        std::wstring entry = prefix + name;
+        for (auto& c : entry) c = towlower(c);
+        out.push_back(entry);
+        Log(L"marked mod: %ls  (%ls)", entry.c_str(), info.c_str());
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+// Local mods and Steam Workshop mods carrying the marker, sorted alphabetically (= the order they are enabled in).
+static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, const std::wstring& appid, const std::wstring& marker)
+{
+    std::vector<std::wstring> out;
+    if (marker.empty()) return out;
+    std::string m = AsciiLower(Utf8(marker));
+    std::wstring root = DirOf(DirOf(DirOf(gameExe)));                       // binaries\x64\exe -> game root
+    ScanMarkedMods(root + L"\\mods", L"", m, out);
+    ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, out);   // <library>\steamapps\...
+    for (size_t i = 1; i < out.size(); ++i)
+        for (size_t j = i; j > 0 && _wcsicmp(out[j].c_str(), out[j - 1].c_str()) < 0; --j) std::swap(out[j], out[j - 1]);
+    for (size_t i = 1; i < out.size(); )
+        if (_wcsicmp(out[i].c_str(), out[i - 1].c_str()) == 0) out.erase(out.begin() + i); else ++i;
+    return out;
+}
+
 // Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
-static bool EnsureModsEnabled(const Config& cfg, const std::wstring& gameExe, std::wstring& err)
+static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 {
     if (cfg.requireMods.empty()) return true;
     std::wstring opt = FindOptionsSet(cfg);
@@ -653,10 +721,6 @@ static bool EnsureModsEnabled(const Config& cfg, const std::wstring& gameExe, st
     }
     std::string text = ReadFileA(opt);
     if (text.empty()) { err = L"could not read " + opt; return false; }
-
-    std::wstring modsDir = DirOf(DirOf(DirOf(gameExe))) + L"\\mods";   // binaries\x64\exe -> game root
-    for (const auto& m : cfg.requireMods)
-        if (!PathIsDirectoryW((modsDir + L"\\" + m).c_str())) Log(L"warning: mod folder not found: %ls\\%ls", modsDir.c_str(), m.c_str());
 
     size_t start = std::string::npos, pos = 0;
     while ((pos = text.find("{mods", pos)) != std::string::npos) {
@@ -687,20 +751,19 @@ static bool EnsureModsEnabled(const Config& cfg, const std::wstring& gameExe, st
     std::vector<std::string> wanted;
     for (const auto& m : cfg.requireMods) wanted.push_back(Utf8(m));
 
+    // Other mods keep their places (unless exclusive); the marked ones follow, in alphabetical order. An existing
+    // entry keeps its ":n" suffix.
     std::vector<std::string> result;
-    if (cfg.modsExclusive) {
-        for (const auto& w : wanted) {
-            std::string keep = w + ":0";
-            for (const auto& e : entries) if (same(nameOf(e), w)) keep = e;
-            result.push_back(keep);
+    if (!cfg.modsExclusive)
+        for (const auto& e : entries) {
+            bool marked = false;
+            for (const auto& w : wanted) if (same(nameOf(e), w)) { marked = true; break; }
+            if (!marked) result.push_back(e);
         }
-    } else {
-        result = entries;
-        for (const auto& w : wanted) {
-            bool present = false;
-            for (const auto& e : result) if (same(nameOf(e), w)) { present = true; break; }
-            if (!present) result.push_back(w + ":0");
-        }
+    for (const auto& w : wanted) {
+        std::string keep = w + ":0";
+        for (const auto& e : entries) if (same(nameOf(e), w)) { keep = e; break; }
+        result.push_back(keep);
     }
     if (result == entries) { Log(L"profile mods already as required (%ls)", opt.c_str()); return true; }
 
@@ -886,7 +949,7 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
 
     {
         std::wstring err;
-        if (!EnsureModsEnabled(g_cfg, g_cfg.exe, err)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
+        if (!EnsureModsEnabled(g_cfg, err)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
     }
 
     std::wstring exeDir = DirOf(exe);
@@ -2626,20 +2689,9 @@ static int RealMain(int argc, wchar_t** argv)
         cfg.appid      = ReadIni(L"appid", L"400750");
         cfg.soundHover = ReadIni(L"sound_hover", L"embedded");
         cfg.soundClick = ReadIni(L"sound_click", L"embedded");
-        {
-            std::wstring list = ReadIni(L"require_mods");
-            size_t p0 = 0;
-            while (p0 <= list.size()) {
-                size_t c = list.find(L',', p0); if (c == std::wstring::npos) c = list.size();
-                std::wstring item = list.substr(p0, c - p0);
-                while (!item.empty() && iswspace(item.front())) item.erase(0, 1);
-                while (!item.empty() && iswspace(item.back())) item.pop_back();
-                if (!item.empty()) cfg.requireMods.push_back(item);
-                p0 = c + 1;
-            }
-            cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
-            cfg.modsProfile   = ReadIni(L"mods_profile");
-        }
+        cfg.modsMarker    = ReadIni(L"mods_marker", L"[INDOMITUS_MOD_LAUNCHER]");
+        cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
+        cfg.modsProfile   = ReadIni(L"mods_profile");
         cfg.showModFolderButton = ReadIni(L"show_mod_folder_button", L"1") != L"0";
         cfg.showDisableModsButton = ReadIni(L"show_disable_mods_button", L"1") != L"0";
         cfg.version    = ReadIni(L"version");
@@ -2705,6 +2757,8 @@ static int RealMain(int argc, wchar_t** argv)
     if (cfg.editorExe.empty()) cfg.editorExe = DirOf(cfg.exe) + L"\\call_to_arms_ed.exe";
     else cfg.editorExe = MakeAbsolute(g_dir, cfg.editorExe);
     for (auto* s : { &cfg.exe, &cfg.editorExe, &cfg.dllDir }) for (auto& c : *s) if (c == L'/') c = L'\\';
+    cfg.requireMods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);
+    if (cfg.requireMods.empty()) Log(L"no mod has \"%ls\" in its mod.info description - the mod list is left alone", cfg.modsMarker.c_str());
     if (!ExtractPayload(cfg)) { if (g_log) { fclose(g_log); g_log = nullptr; } return 1; }
 #ifdef DEV_BUILD
     CollectDevDlls(cfg);

@@ -13,7 +13,7 @@ Every player in a multiplayer match needs the same launcher build (the code is s
    verifying every file against its SHA-256. Each DLL writes its own log into that folder.
 2. Checks GitHub for a newer launcher and offers it (see *Auto-update*).
 3. **Play** / **Editor**: makes sure Steam is running and logged in (starts it if needed), switches the
-   Indomitus mods on in the game profile, starts the exe suspended, loads the DLLs, verifies they are
+   marked mods on in the game profile (see `mods_marker=`), starts the exe suspended, loads the DLLs, verifies they are
    in, then hides until the game exits. If a DLL fails to load the game is closed instead of running
    half-patched.
 
@@ -89,7 +89,7 @@ updates signed with the official key, so a fork can never update them.
 
 | Key | Meaning |
 |---|---|
-| `require_mods=` | mod folder names switched on in the profile before every launch (comma-separated) |
+| `mods_marker=` | text that marks a mod for the launcher (default `[INDOMITUS_MOD_LAUNCHER]`): every local or Workshop mod with it in its `mod.info` `{desc "..."}` is switched on before launch, alphabetically by folder name |
 | `mods_exclusive=` | 1 = switch every other mod off |
 | `show_mod_folder_button=`, `show_disable_mods_button=` | hide the two developer buttons for end users |
 | `require_steam=`, `steam_autostart=`, `steam_timeout_ms=` | the Steam check before launching |
