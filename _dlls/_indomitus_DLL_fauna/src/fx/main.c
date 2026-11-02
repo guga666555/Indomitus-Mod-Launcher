@@ -93,6 +93,11 @@ static void init(HMODULE self)
 
     g_okVit = find_vitality();
 
+    /* simulation, any unit: a vitality extender on a non-foot chassis no longer kills the game */
+    if (!ini_int("vitality_any_chassis", 1)) logf_("vitality on any chassis        off (ini)");
+    else if (find_vitality_chassis() && install_vitality_chassis()) logf_("vitality on any chassis        ON ({extender \"vitality\"} works with wheel/track/human_carrier chassis)");
+    else logf_("vitality on any chassis        OFF (engine code not recognised)");
+
     /* simulation, single player and editor: a bandage double-clicked in a fauna inventory heals it */
     if (!wantBandage) logf_("fauna bandages                 off (ini)");
     else if (!g_okVit) logf_("fauna bandages                 OFF (health getters not found)");

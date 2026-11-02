@@ -17,6 +17,11 @@
  *   - the GetVelocity hook only answers for the plane that is releasing (other entities get the original).
  *   - BombFallback removed (it was read and never used; a bay-action name is no entity, nothing to spawn).
  *   - trampolines RX, ini section [bombbay], BB_TEST offline finder check (build.bat test).
+ *   - review/cleanup: the eWeaponFire command, eTarget and Tags-ctor finders (found but never used) are gone, so they
+ *     can no longer turn the feature OFF; find_launch shares find_vtable; a run / seen-order entry that stopped ticking
+ *     for 5 s is dropped (plane shot down before the click would otherwise leave a stale run that a reused entity
+ *     address could pick up); the shooter is re-validated (vtable + back pointer) and the magazine re-read before every
+ *     release; a finished run is forgotten once the engine's drop step has passed.
  *
  * Engine side (1.067, everything found at run time by RTTI / byte patterns, nothing hard-coded):
  *   Order::eAirstrike = sequence MoveTo(click) -> eBombDropOrder(name) -> MoveTo(exit) -> destroy.
@@ -210,23 +215,32 @@ static size_t sb_prolog_len(const uint8_t *f)
 /* Launch: mov rax,rsp ; mov [rax+8],rbx */
 static const uint8_t k_launchProlog[] = { 0x48,0x8B,0xC4, 0x48,0x89,0x58,0x08 };
 
+static int in_data(const void *a) { return (uint8_t *)a >= g_data.p && (uint8_t *)a < g_data.p + g_data.n; }
+
+/* vftable of a class via MSVC RTTI (TypeDescriptor in .data <- CompleteObjectLocator (offset 0) <- vftable[-1]) */
+static uint8_t *find_vtable(const char *rtti)
+{
+    uint8_t *name = find_cstr_in(g_data, rtti);
+    if (!name) return NULL;
+    uint32_t tdRel = (uint32_t)(name - 0x10 - g_base);
+    uint8_t *vt = NULL; int hits = 0;
+    for (size_t i = 12; i + 4 <= g_rdata.n; i += 4) {
+        if (*(uint32_t *)(g_rdata.p + i) != tdRel || *(uint32_t *)(g_rdata.p + i - 12) != 1 || *(uint32_t *)(g_rdata.p + i - 8) != 0) continue;
+        uint64_t col = (uint64_t)(g_rdata.p + i - 12);
+        for (size_t j = 0; j + 8 <= g_rdata.n; j += 8)
+            if (*(uint64_t *)(g_rdata.p + j) == col) { vt = g_rdata.p + j + 8; hits++; }
+    }
+    return hits == 1 ? vt : NULL;
+}
+
 /* eBulletShooter vftable via MSVC RTTI (TypeDescriptor <- CompleteObjectLocator <- vftable[-1]); slot 11 = Launch.
    Gives weapon->stuff (needed for the bomb_interval_<ms> weapon tag) and SpawnBullet (anchor of the magazine
    offsets). If another payload DLL has already inline-hooked Launch its prologue is gone: that is reported as
    such, and the two dependent features degrade (interval from ini / action suffix only; round count unknown). */
 static int find_launch(void)
 {
-    uint8_t *name = find_cstr_in(g_data, ".?AVeBulletShooter@Weapon@Actor@@");    /* TypeDescriptors live in .data */
-    if (!name) { logf_("Launch: RTTI name not found"); return 0; }
-    uint32_t tdRel = (uint32_t)(name - 0x10 - g_base);
-    uint8_t *vt = NULL; int hits = 0;
-    for (size_t i = 12; i + 4 <= g_rdata.n; i += 4) {
-        if (*(uint32_t *)(g_rdata.p + i) != tdRel || *(uint32_t *)(g_rdata.p + i - 12) != 1) continue;
-        uint64_t col = (uint64_t)(g_rdata.p + i - 12);
-        for (size_t j = 0; j + 8 <= g_rdata.n; j += 8)
-            if (*(uint64_t *)(g_rdata.p + j) == col) { vt = g_rdata.p + j + 8; hits++; }
-    }
-    if (hits != 1 || !in_rdata(vt)) { logf_("Launch: vftable %s", hits ? "ambiguous" : "not found"); return 0; }
+    uint8_t *vt = find_vtable(".?AVeBulletShooter@Weapon@Actor@@");
+    if (!vt) { logf_("Launch: eBulletShooter vftable not found"); return 0; }
     uint8_t *f = *(uint8_t **)(vt + 11 * 8);
     if (!in_text(f)) { logf_("Launch: slot 11 points outside .text (vtable slot swapped by another DLL?)"); return 0; }
     if (memcmp(f, k_launchProlog, sizeof k_launchProlog)) { logf_("Launch: slot 11 prologue not recognised%s", (f[0] == 0xFF && f[1] == 0x25) || f[0] == 0xE9 ? " (entry already hooked by another DLL)" : ""); return 0; }
@@ -267,23 +281,6 @@ static int find_stuff_tags(void)
         g_stuffTagsEnd != g_stuffTagsBeg + 8) { logf_("stuff tags: vector offsets not found"); return 0; }
     logf_("stuff tags vector @ stuff+0x%X", g_stuffTagsBeg);
     return 1;
-}
-static int in_data(const void *a) { return (uint8_t *)a >= g_data.p && (uint8_t *)a < g_data.p + g_data.n; }
-
-/* vftable of a class via MSVC RTTI (TypeDescriptor in .data <- CompleteObjectLocator (offset 0) <- vftable[-1]) */
-static uint8_t *find_vtable(const char *rtti)
-{
-    uint8_t *name = find_cstr_in(g_data, rtti);
-    if (!name) return NULL;
-    uint32_t tdRel = (uint32_t)(name - 0x10 - g_base);
-    uint8_t *vt = NULL; int hits = 0;
-    for (size_t i = 12; i + 4 <= g_rdata.n; i += 4) {
-        if (*(uint32_t *)(g_rdata.p + i) != tdRel || *(uint32_t *)(g_rdata.p + i - 12) != 1 || *(uint32_t *)(g_rdata.p + i - 8) != 0) continue;
-        uint64_t col = (uint64_t)(g_rdata.p + i - 12);
-        for (size_t j = 0; j + 8 <= g_rdata.n; j += 8)
-            if (*(uint64_t *)(g_rdata.p + j) == col) { vt = g_rdata.p + j + 8; hits++; }
-    }
-    return hits == 1 ? vt : NULL;
 }
 /* ---- weapon item / magazine (from GEM Converge 0.4; needed here for the loaded round count) ----------------- */
 /* The weapon's loaded magazine is the weapon ITEM's filling: item+fillStuff = ammo eStuff*, +8 = rounds
@@ -369,11 +366,8 @@ static size_t prolog_len(const uint8_t *f)
    eBombDropOrder::Execute (also a vtable patch) then skips its vanilla spawn when a run exists for the carrier (a bay
    action on a plane without a usable bomb place skips it too: the name is no entity). Orders only exist on the host /
    in SP. Layout (1.067): entity+0xDD8 = weaponry, weaponry+0x18 = place* vector, place+0x18 = place name Tags (string
-   +0x40), place+0x2B8 = weapon (from the weapon_work action). The eWeaponFire / Tags-ctor finders below are kept as
-   anchors (they confirm the layout) but the fire command itself is not used. */
+   +0x40), place+0x2B8 = weapon (from the weapon_work action; eWeaponFire::Execute gives the place->weapon offset). */
 typedef intptr_t (*OrderFn)(void *order, intptr_t a, intptr_t b, intptr_t c);
-typedef void (*WeaponFireCmdFn)(void *weapon, void *target, int mode, int r9, int count);
-typedef void (*WeaponStopFn)(void *weapon, int how);
 typedef void *(*ObjFn)(void *obj);
 typedef void *(*TagCtorFn)(void *tag, const char *s);
 typedef void *(*EvInitFn)(void *ev, void *entity);
@@ -387,13 +381,11 @@ static GetVelFn g_getVel;
 static float *g_gravity, *g_gravK;
 static uint8_t *g_vtBombShooter;
 static int find_strike_altitude(void);
-static uint8_t *g_bdExec, *g_asTick, *g_vtBD, *g_vtAS, *g_vtTarget;
-static ObjFn g_tagsCtor, g_targetReset, g_tagsDtor, g_evDtor;
+static uint8_t *g_bdExec, *g_asTick, *g_vtBD, *g_vtAS;
+static ObjFn g_evDtor;
 static TagCtorFn g_tagCtor;
 static EvInitFn g_evInit;
 static EvSendFn g_evSend;
-static WeaponFireCmdFn g_weaponFireCmd;
-static WeaponStopFn g_weaponStop;
 static uint32_t g_ifaceOff, g_bdTargetOff, g_weaponryOff, g_placesOff, g_placeNameOff, g_placeWeaponOff;
 
 static uint8_t *vslot(uint8_t *vt, int i) { uint8_t *f = *(uint8_t **)(vt + 8 * i); return in_text(f) ? f : NULL; }
@@ -404,9 +396,8 @@ static int find_bombbay(void)
     uint8_t *vtBD = find_vtable(".?AUeBombDropOrder@Order@@"), *vtAS = find_vtable(".?AUeAirstrike@Order@@"),
             *vtWF = find_vtable(".?AUeWeaponFire@Order@@"), *vtWW = find_vtable(".?AUeWeaponWork@Interaction@@"),
             *vtAA = find_vtable(".?AUeAirAttack@Order@@");
-    g_vtTarget = find_vtable(".?AVeTarget@@");
-    if (!vtBD || !vtAS || !vtWF || !vtWW || !vtAA || !g_vtTarget) {
-        logf_("bomb bay: vtables not found (drop %d strike %d fire %d work %d attack %d target %d)", !!vtBD, !!vtAS, !!vtWF, !!vtWW, !!vtAA, !!g_vtTarget); return 0; }
+    if (!vtBD || !vtAS || !vtWF || !vtWW || !vtAA) {
+        logf_("bomb bay: vtables not found (drop %d strike %d fire %d work %d attack %d)", !!vtBD, !!vtAS, !!vtWF, !!vtWW, !!vtAA); return 0; }
     uint8_t *p;
     /* eBombDropOrder::Execute (slot 19; the editor build is a thin wrapper): lea r64,[rax-iface] -> order+8 = carrier interface */
     g_vtBD = vtBD; g_vtAS = vtAS;
@@ -422,15 +413,9 @@ static int find_bombbay(void)
     else if ((p = find_bytes(g_bdExec, 0x40, (const uint8_t *)"\x48\x8D\x51", 3))) g_bdTargetOff = p[3];
     if (g_bdTargetOff < 0x40 || g_bdTargetOff > 0x68) { logf_("bomb bay: drop target offset not found"); return 0; }
     if (!(g_asTick = vslot(vtAS, 3))) { logf_("bomb bay: airstrike tick not in .text"); return 0; }
-    /* eWeaponFire::Execute: first call = held/place weapon (mov rax,[rax+placeWeapon]) ; mov r9d,3 ... call FireCmd */
+    /* eWeaponFire::Execute (slot 19): its first call returns the held / place weapon: mov rax,[rax+placeWeapon] */
     uint8_t *wf = vslot(vtWF, 19), *held = wf ? call_target(wf, 0x40, 0) : NULL;
     if (!held || !find_disp32(held, 0x20, (const uint8_t *)"\x48\x8B\x80", 0x100, 0x800, &g_placeWeaponOff)) { logf_("bomb bay: place->weapon offset not found"); return 0; }
-    if (!(p = find_bytes(wf, 0x300, (const uint8_t *)"\x41\xB9\x03\x00\x00\x00", 6)) || !(g_weaponFireCmd = (WeaponFireCmdFn)call_after(p, 0x20))) { logf_("bomb bay: weapon fire command not found"); return 0; }
-    /* FireCmd: target type 0 -> mov edx,1 ; mov rcx,weapon ; call Stop */
-    if (!(p = find_bytes((uint8_t *)g_weaponFireCmd, 0x100, (const uint8_t *)"\xBA\x01\x00\x00\x00", 5)) || !(g_weaponStop = (WeaponStopFn)call_after(p, 0x10))) { logf_("bomb bay: weapon stop not found"); return 0; }
-    /* eWeaponFire dtor (slot 0): eTarget reset, then the target's Tags dtor */
-    uint8_t *wd = vslot(vtWF, 0);
-    if (!wd || !(g_targetReset = (ObjFn)call_target(wd, 0x40, 0)) || !(g_tagsDtor = (ObjFn)call_target(wd, 0x40, 1))) { logf_("bomb bay: target dtor not found"); return 0; }
     /* weapon_work execute (slot 9): mov rcx,[entity+weaponry] ; call FindPlace (mov rbx,[rcx+places] ; add rcx,name) */
     uint8_t *ww = vslot(vtWW, 9);
     if (!ww || !find_disp32(ww, 0x20, (const uint8_t *)"\x49\x8B\x88", 0x400, 0x2000, &g_weaponryOff)) { logf_("bomb bay: weaponry offset not found"); return 0; }
@@ -439,13 +424,6 @@ static int find_bombbay(void)
     g_placesOff = p[3];
     if (!(p = find_bytes(fp, 0x60, (const uint8_t *)"\x48\x83\xC1", 3))) { logf_("bomb bay: place name offset not found"); return 0; }
     g_placeNameOff = p[3];
-    /* Tags ctor: the weapon_work action factory ({ "weapon_work", factory } in .data) = operator new, then Tags ctor */
-    uint8_t *fac = NULL;
-    for (size_t i = 0; i + 16 <= g_data.n && !fac; i += 8) {
-        uint8_t *str = *(uint8_t **)(g_data.p + i), *fn = *(uint8_t **)(g_data.p + i + 8);
-        if (in_rdata(str) && in_text(fn) && !memcmp(str, "weapon_work", 12) && str[-1] == 0) fac = fn;
-    }
-    if (!fac || !(g_tagsCtor = (ObjFn)call_target(fac, 0x60, 1))) { logf_("bomb bay: Tags ctor not found"); return 0; }
     /* script event (eAirAttack slot 20 raises "air_attack"): lea rdx,[entity-iface] ; cmove ; call EvInit ...
        lea rdx,[tag] ; lea rcx,[ev] ; call EvSend ; lea rcx,[ev] ; call EvDtor ; guarded init: lea rdx,"air_attack" ; lea rcx,[tag] ; call TagCtor */
     uint8_t *aa = vslot(vtAA, 20), *ls = NULL;
@@ -481,8 +459,8 @@ static int find_bombbay(void)
     logf_("bomb bay: eBombShooter::Launch = exe+0x%llX, GroundZ = exe+0x%llX, GetVelocity = exe+0x%llX, gravity %g x %g",
           (unsigned long long)((uint8_t *)g_bombLaunch - g_base), (unsigned long long)((uint8_t *)g_groundZ - g_base),
           (unsigned long long)((uint8_t *)g_getVel - g_base), *g_gravity, *g_gravK);
-    logf_("bomb bay: airstrike tick = exe+0x%llX, drop Execute = exe+0x%llX, FireCmd = exe+0x%llX, carrier iface +0x%X, drop target +0x%X, weaponry +0x%X, places +0x%X, place name +0x%X, place weapon +0x%X, event %s",
-          (unsigned long long)(g_asTick - g_base), (unsigned long long)(g_bdExec - g_base), (unsigned long long)((uint8_t *)g_weaponFireCmd - g_base),
+    logf_("bomb bay: airstrike tick = exe+0x%llX, drop Execute = exe+0x%llX, carrier iface +0x%X, drop target +0x%X, weaponry +0x%X, places +0x%X, place name +0x%X, place weapon +0x%X, event %s",
+          (unsigned long long)(g_asTick - g_base), (unsigned long long)(g_bdExec - g_base),
           g_ifaceOff, g_bdTargetOff, g_weaponryOff, g_placesOff, g_placeNameOff, g_placeWeaponOff, g_evSend ? "found" : "off");
     find_strike_altitude();                              /* optional: altitude stays vanilla when it fails */
     return 1;
@@ -498,7 +476,6 @@ static int find_bombbay(void)
 typedef intptr_t (*StrikeSetupFn)(intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4, intptr_t a5, intptr_t a6, intptr_t a7);
 static float *g_strikeAlt;
 static uint8_t *g_strikeSetupA, *g_strikeSetupB;
-static StrikeSetupFn g_strikeSetupAOrig, g_strikeSetupBOrig;
 
 static int find_strike_altitude(void)
 {
@@ -624,6 +601,7 @@ static int bomb_action_match(const uint8_t *drop, char *name, size_t n, int *ms)
     return bomb_action_parse(name, ms, &alt);
 }
 
+static StrikeSetupFn g_strikeSetupAOrig, g_strikeSetupBOrig;
 /* StrikeSetup hooks: a bay action flies at its _<N>m altitude (else BombAltitude); the vanilla constant is put back after.
    The name std::string is whichever of the first three pointer args reads as a printable bay action. */
 static intptr_t strike_core(StrikeSetupFn orig, const char *which, intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4, intptr_t a5, intptr_t a6, intptr_t a7)
@@ -676,8 +654,10 @@ typedef struct {
     DWORD next;                 /* time the next bomb may leave the bay */
     float tx, ty;
     float lp[3], vel[3]; DWORD lt; int haveVel;   /* plane velocity (units/ms) from its own movement, smoothed */
-    DWORD t0;
+    DWORD t0, last;             /* start / last airstrike tick that saw this carrier (a run not ticked for RUN_STALE_MS is dead) */
+    int passed;                 /* the engine's own drop step has run (hook_bd_exec): the run may be forgotten once the bay is empty */
 } BombRun;
+#define RUN_STALE_MS 5000       /* an eAirstrike ticks every frame while it lives; silence this long = the order / plane is gone */
 
 /* while the dll releases a bomb, the engine's GetVelocity(owner) answers with the plane's measured velocity */
 static float *hook_getvel(void *entity, float *out)
@@ -771,14 +751,21 @@ static void bomb_start(uint8_t *carrier, const float *xy, const char *action, in
     if (g_bombLog > 0) { g_bombLog--; logf_("bomb bay: run started (airstrike:%s), target (%.1f %.1f), %s, interval %d ms", action, xy[0], xy[1], names[0] ? names : "no bomb place", r.interval); }
     for (int i = 0; i < MAX_RUNS; i++) if (g_runs[i].carrier == carrier) g_runs[i].carrier = NULL;   /* a reused entity address */
     if (!r.n) return;
-    r.carrier = carrier; r.tx = xy[0]; r.ty = xy[1]; r.t0 = GetTickCount();
+    r.carrier = carrier; r.tx = xy[0]; r.ty = xy[1]; r.t0 = r.last = GetTickCount();
     g_runs[g_runNext] = r; g_runNext = (g_runNext + 1) % MAX_RUNS;
     bomb_event(carrier, g_bombEvent);
 }
 
+/* the live run of a carrier; a run whose order stopped ticking (plane shot down / deleted before the drop step) is
+   forgotten here instead of surviving until its entity address is reused by another plane */
 static BombRun *bomb_run_of(const uint8_t *carrier)
 {
-    for (int i = 0; i < MAX_RUNS && carrier; i++) if (g_runs[i].carrier == carrier) return &g_runs[i];
+    DWORD now = GetTickCount();
+    for (int i = 0; i < MAX_RUNS && carrier; i++) {
+        if (g_runs[i].carrier != carrier) continue;
+        if (now - g_runs[i].last > RUN_STALE_MS) { g_runs[i].carrier = NULL; return NULL; }
+        return &g_runs[i];
+    }
     return NULL;
 }
 
@@ -788,7 +775,14 @@ static void bomb_release(BombRun *r)
 {
     for (int k = 0; k < r->n; k++) {
         if (r->left[k] <= 0) continue;
-        uint8_t *s = r->shooter[k], *item = weapon_item(r->weapon[k]);
+        uint8_t *s = r->shooter[k], *vt = NULL, *back = NULL;
+        if (!rd_mem(s, &vt, 8) || vt != g_vtBombShooter || !rd_mem(s + 8, &back, 8) || back != r->weapon[k]) {   /* weapon gone (plane damaged)? */
+            if (g_bombLog > 0) { g_bombLog--; logf_("bomb bay: bomb place %d no longer has its shooter - %d bomb(s) left in it skipped", k + 1, r->left[k]); }
+            r->released += r->left[k]; r->left[k] = 0; continue;
+        }
+        uint8_t *item = weapon_item(r->weapon[k]);
+        int have = item ? weapon_rounds(r->weapon[k]) : -1;
+        if (have == 0) { r->released += r->left[k]; r->left[k] = 0; continue; }     /* magazine emptied by something else */
         int barrel = r->barrel[k]++;
         *(int32_t *)(s + 0x10) = barrel;
         for (int i = 0; i < 3; i++) g_bombVel[i] = r->haveVel ? r->vel[i] * (g_bombVelPct / 100.f) : 0.f;
@@ -815,7 +809,7 @@ static void bomb_release(BombRun *r)
    starts when the engine's own drop step fires (plane over the click). Then one bomb per BombInterval ms. */
 static void bomb_tick(BombRun *r)
 {
-    if (r->released >= r->total) return;
+    if (r->released >= r->total) { if (r->passed) r->carrier = NULL; return; }
     DWORD now = GetTickCount();
     float p[3];
     if (rd_mem(r->carrier + ENT_POS, p, 12)) {
@@ -892,7 +886,7 @@ static int drop_child_target(const uint8_t *seq, float *xy, uint8_t **child)
     return 0;
 }
 
-typedef struct { const void *order; const uint8_t *carrier; } SeenRun;
+typedef struct { const void *order; const uint8_t *carrier; DWORD last; } SeenRun;   /* orders already parsed; an entry silent for RUN_STALE_MS is dropped (order addresses get reused) */
 #define MAX_SEEN 32
 static SeenRun g_seen[MAX_SEEN];
 static int g_seenNext, g_seqDumpLog = 2;
@@ -906,11 +900,12 @@ static intptr_t hook_as_tick(void *order, intptr_t a, intptr_t b, intptr_t c)
     if (rd_mem(order, &vt, 8) && vt == g_vtAS && rd_mem((uint8_t *)order + 8, &iface, 8) && iface) {
         carrier = iface - g_ifaceOff;
         BombRun *run = bomb_run_of(carrier);
-        if (run) bomb_tick(run);                           /* before the tick: the last child deletes the plane */
-        int seen = 0;
-        for (int i = 0; i < MAX_SEEN; i++) if (g_seen[i].order == order && g_seen[i].carrier == carrier) { seen = 1; break; }
+        if (run) { run->last = GetTickCount(); bomb_tick(run); }   /* before the tick: the last child deletes the plane */
+        int seen = 0; DWORD now = GetTickCount();
+        for (int i = 0; i < MAX_SEEN; i++)
+            if (g_seen[i].order == order && g_seen[i].carrier == carrier) { seen = now - g_seen[i].last <= RUN_STALE_MS; g_seen[i].last = now; break; }
         if (!seen) {
-            g_seen[g_seenNext].order = order; g_seen[g_seenNext].carrier = carrier; g_seenNext = (g_seenNext + 1) % MAX_SEEN;
+            g_seen[g_seenNext].order = order; g_seen[g_seenNext].carrier = carrier; g_seen[g_seenNext].last = now; g_seenNext = (g_seenNext + 1) % MAX_SEEN;
             if (drop_child_target(order, xy, &child)) start = bomb_action_match(child, action, sizeof action, &actionMs);   /* other airstrike names stay vanilla */
             else if (g_seqDumpLog > 0) {
                 uint64_t q[11] = { 0 }; rd_mem(order, q, sizeof q); g_seqDumpLog--;
@@ -934,6 +929,7 @@ static intptr_t hook_bd_exec(void *order, intptr_t state_, intptr_t b, intptr_t 
         if (r) {
             if (g_bombLog > 0) { g_bombLog--; logf_("bomb bay: over the click after %.1f s, %d of %d bombs out -> %s (vanilla spawn skipped)", (GetTickCount() - r->t0) / 1000.0, r->released, r->total,
                                                     r->dropping ? "stick already running" : "releasing the bay now"); }
+            r->passed = 1;
             if (!r->dropping) { r->dropping = 1; r->next = GetTickCount(); bomb_tick(r); }   /* the first bomb now, the rest on the following ticks */
             if (r->released >= r->total) r->carrier = NULL;   /* engine step passed and bay empty: forget the run before the plane is deleted */
             return 1;

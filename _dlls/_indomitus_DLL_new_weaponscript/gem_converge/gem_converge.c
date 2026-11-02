@@ -1,5 +1,5 @@
 /*
- * GEM Converge 1.0  -  Call to Arms: Gates of Hell (GEM engine)
+ * GEM Converge 1.1  -  Call to Arms: Gates of Hell (GEM engine)  -  module of gem_weaponscript.dll (Indomitus Launcher payload)
  * Barrel convergence + multi-shot for the engine's bullet shooter. Split out of the all-in-one GEM Converge 0.5.1.
  *
  * Per-weapon opt-ins, stuff tags on the gun's set file:
@@ -21,8 +21,7 @@
  * the parallax between the barrel and the sight is taken out.
  */
 #define GEM_NAME    "GEM Converge"
-#define GEM_VERSION "1.0"
-#define GEM_FILE    L"gem_converge"
+#define GEM_VERSION "1.1"
 #define GEM_SECT    L"converge"
 #include "../common/gem_common.h"
 
@@ -143,6 +142,7 @@ static int setup(int install)
     }
     logf_("barrel convergence / multi-shot   ON (stuff tags \"%s\", bullets_per_shot_N, bullet_spread_N; default cone %g deg, min distance %g, multiplayer %s)",
           g_tag, g_bulletSpread, g_minDist, g_allowNet ? "allowed" : "off");
+    log_mp_note(g_allowNet);
     return 1;
 }
 
@@ -158,31 +158,28 @@ static void read_config(void)
 }
 
 #ifndef GEM_TEST
-__declspec(dllexport) const char *GemHookVersion(void) { return GEM_NAME " " GEM_VERSION; }
-
-BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
+/* called from gem_weaponscript.c DllMain; 1 = feature ON */
+int converge_init(void)
 {
-    (void)reserved;
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
-        InitializeCriticalSection(&g_logLock);
-        const wchar_t *exe;
-        if (gem_open(h, &exe)) {
-            read_config();
-            if (!g_tagLen) logf_("Tag= is empty - nothing to do");
-            else setup(1);
-        }
+    int on = 0;
+    if (gem_module_open()) {
+        read_config();
+        if (!g_tagLen) logf_("Tag= is empty - nothing to do");
+        else on = setup(1);
     }
-    return TRUE;
+    gem_module_close();
+    return on;
 }
 #else
-int converge_selftest(uint8_t *base, void ***hooked, int *nhooked)
+int converge_selftest(uint8_t *base, const char *exePath, void ***hooked, int *nhooked, GemFound *found)
 {
+    gem_test_reset();
+    g_testExe = exePath;
     get_sections(base);
     read_config();
-    g_nhooked = 0;
     int r = setup(1);
     *hooked = g_hooked; *nhooked = g_nhooked;
+    gem_found(found);
     return r;
 }
 #endif

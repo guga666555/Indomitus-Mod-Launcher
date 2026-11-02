@@ -1,4 +1,4 @@
-# GEM Fauna 0.6.3
+# GEM Fauna 0.7.0
 
 Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
 carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
@@ -25,7 +25,8 @@ fails only turns its feature off (see `gem_fauna.log`).
 | direct-control HUD: health and stamina rows (human view icons) instead of fuel and speed for fauna | `fauna_dc_hud`, `dc_health_icon`, `dc_stamina_icon`, `dc_vehicle_icon_1/2` | local (game, editor) |
 | over-head squad icon picked by a def prop: `{props "squad_view_<file>"}` (role icon), optional `{props "squad_view_leader_<file>"}` (leader icon); files in `interface/scene/squad_view/` | `fauna_head_icon` | local (game, editor) |
 | stamina bar in the vehicle panel (`bar_stamina` / `txt_stamina` / `pnl_stamina`) for fauna with a vitality `{Stamina}` block | `fauna_stamina_bar`, `stamina_bar_name`, `stamina_text_name`, `stamina_panel_name` | local |
-| diagnostics | `crash_log`, `ui_debug` | - |
+| `{extender "vitality"}` (Health) on a wheel/track/human_carrier chassis no longer kills the game (any unit, not only fauna) | `vitality_any_chassis` | **simulation** |
+| diagnostics | `crash_log`, `ui_debug`, `fauna_sprint_debug` | - |
 
 Mod side: the vehicle panel layout (`GameVehiclePanelView.xml`) needs a progress bar `bar_health` (copy it from the
 human panel), optionally a text `txt_health` and a container `pnl_health`. Fauna defs carry `{props "fauna_main" ...}`;
@@ -216,6 +217,19 @@ Fauna use `{Chassis "foot"}`. Under AI movement, crushing comes from the vehicle
 path; in direct control a tank crushes through its track chassis physics, which a foot chassis does not have. Doing it
 for fauna means driving the obstacle-crush code by hand and needs a runtime trace first (next step: a diagnostic build).
 
+## Vitality on any chassis (0.7.0) - how it works
+
+The engine ties the vitality extender to the foot chassis: its timer update (health and stamina regeneration, host side)
+ends every tick with `dynamic_cast<eChassisFoot&>(entity->chassis)` - a *reference* cast, which throws `std::bad_cast`
+for any other chassis - followed by `eChassisFoot::SetStaminaMovementModeLimit(limit)`. It gets there even without a
+`{Stamina}` block (the empty movement_limits case still applies limit 2), so a unit with `{extender "vitality" {Health}}`
+and `{Chassis "human_carrier"}` (the Carnifex), wheel or track was a fatal error on its first tick. GEM Fauna flips the
+cast's throw flag (the `isReference` argument, 1 -> 0) and redirects the SetStaminaMovementModeLimit call to a wrapper
+that skips a NULL chassis. The client-side path of the same function calls a base-class virtual every chassis has.
+Stamina limits still work on foot chassis; a non-foot chassis simply has no stamina speed limit. Finder: the
+SetStaminaMovementModeLimit call inside the timer (the function longer than 0x200 bytes), preceded by
+`mov rcx,rax ; xor r8d,r8d ; mov edx,ebx` and the `mov dword [rsp+0x20],1` within 0x50 bytes before it.
+
 ## Performance notes (0.6.3)
 
 Nothing runs per frame unless a fauna is selected or in direct control. Then: the vehicle panel rows (widgets resolved
@@ -225,6 +239,10 @@ caches its answer per def (64-entry direct-mapped table). Orders, election, sele
 run on player actions only. All debug logs are capped and off by default.
 
 ## History
+- 0.7.0 - vitality on any chassis: the vitality timer's foot-chassis reference cast no longer throws, so `{extender
+  "vitality" {Health}}` works with human_carrier/wheel/track chassis (Carnifex). Simulation; every MP peer needs it.
+- 0.6.4 - crash log: C++ throws are logged with the thrown type and message (engine errors), up to 40, with a
+  16-frame chain. Diagnostics only.
 - 0.6.3 - cleanup: per-def fauna cache, vehicle-panel widgets resolved once per selection, captions and direct-control
   texts written only on change, sprint debug log off by default. Behaviour unchanged from 0.6.2.
 - 0.6.2 - fauna chassis mode/speed changes are committed right away (their FSM never commits them), so the sprint

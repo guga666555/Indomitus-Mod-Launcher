@@ -1,6 +1,6 @@
-# GEM Converge 1.0 — barrel convergence + multi-shot
+# GEM Converge 1.1 — barrel convergence + multi-shot
 
-`gem_converge.dll` + `gem_converge.ini`. Shared code: `..\common\gem_common.h`. Integration: `..\README.md`.
+Module `gem_converge.c` of **`gem_weaponscript.dll`**; settings in the `[converge]` section of `gem_weaponscript.ini`. Shared code: `..\common\gem_common.h`. Launcher integration / install: `..\README.md`.
 
 ## What it does
 
@@ -41,7 +41,7 @@ so every lockstep machine computes the same cone. On a host spawning a `{SyncedP
 pellets take fresh ids from the engine's projectile sync counter (if that counter is not found, synced weapons
 fire a single bullet).
 
-## ini (`[converge]`)
+## ini (`[converge]` section of `gem_weaponscript.ini`)
 
 | key | shipped | default | meaning |
 |---|---|---|---|
@@ -51,9 +51,9 @@ fire a single bullet).
 | `AllowMultiplayer` | 1 | 0 | 0 = stand down in network games |
 | `BulletSpread` | 3 | 3 | default cone half-angle (degrees) |
 | `BulletsPerShotMax` | 32 | 32 | largest N accepted |
-| `LogFile` / `Verbose` / `LogShots` / `Console` | 1/1/10/0 | same | log file, log the first N affected shots, console window |
+| `Verbose` / `LogShots` | 1/10 | same | log the first N affected shots (`LogFile` / `Console` are in `[weaponscript]`) |
 
-Log: `barrel convergence / multi-shot   ON (...)` at start-up; with `Verbose=1` the first `LogShots` lines
+Log (`gem_weaponscript.log`, lines tagged `[GEM Converge]`): `barrel convergence / multi-shot   ON (...)` at start-up; with `Verbose=1` the first `LogShots` lines
 `shot: bone shooter01, aim point 412.3 away, converged 0.73 deg, pellets 0 (cone 0.0 deg)`.
 
 ## Engine facts (1.067; the finders re-derive them)
@@ -74,4 +74,4 @@ Log: `barrel convergence / multi-shot   ON (...)` at start-up; with `Verbose=1` 
 ## Status
 
 Feature tested in the editor in the old combined dll: convergence (Tarantula), multi-shot (pump shotgun,
-8 pellets). This split build: offline chain test only (`..\test`), not yet run in game.
+8 pellets). 1.1 (module of gem_weaponscript.dll, launcher payload build): offline chain test only (`..\test`, incl. entries pre-patched by sibling payload dlls), not yet built on the PC nor run in game through the launcher.

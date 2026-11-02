@@ -28,6 +28,7 @@ int main(int argc, char **argv)
     printf("--- fauna finders (required)\n");
     ok &= find_tag_ctor(); ok &= find_prop_cond(); ok &= find_vitality();
     printf("stamina fields: %s\n", find_stamina_fields() ? "found" : "NOT found");
+    ok &= find_vitality_chassis();
     printf("--- squad finders (required: simulation, every exe)\n");
     ok &= find_squad_select(); ok &= find_squad_elect(); ok &= find_squad_pace(); ok &= find_follow();
     ok &= find_fauna_sprint();

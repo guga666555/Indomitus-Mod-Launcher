@@ -1,18 +1,13 @@
-// Constants spelled out so the file compiles with rc.exe, windres and zig rc alike.
-#define VS_FFI_FILEFLAGSMASK 0x0000003FL
-#define VOS_NT_WINDOWS32     0x00040004L
-#define VFT_APP              0x00000001L
-#define VFT2_UNKNOWN         0x00000000L
+// Resources of Indomitus.exe. Compiled by zig's rc; ids must match the enums in main.cpp.
 
-// Icon 1 is what Explorer shows for the exe. Replace icon.ico with your own
-// (tools/make_icon.py turns any PNG/JPG into a proper multi-size .ico).
+// Icon 1 is what Explorer shows for the exe (tools\make_icon.py turns any PNG/JPG into a multi-size .ico).
 1 ICON "icon.ico"
 
 // Button sounds, compiled into the exe (ids must match RES_SOUND_* in main.cpp).
 201 WAVE "res\\hover.wav"
 202 WAVE "res\\click.wav"
 
-// Background plate (blue-graded artwork), stretched to the window.
+// Background plate, stretched to the window.
 300 BITMAP "res\\background.bmp"
 
 // Title logo (32-bit BMP with premultiplied alpha, made by tools\make_logo.py). Remove this line

@@ -1,5 +1,5 @@
 /*
- * GEM Overcharge 1.0  -  Call to Arms: Gates of Hell (GEM engine)
+ * GEM Overcharge 1.1  -  Call to Arms: Gates of Hell (GEM engine)  -  module of gem_weaponscript.dll (Indomitus Launcher payload)
  * Ammo swap by unit script tag (plasma overcharge). Split out of the all-in-one GEM Converge 0.5.1.
  *
  * While the firing unit (or, for a vehicle gun, the vehicle its gunner is linked to) carries the script tag
@@ -16,8 +16,7 @@
  * with GEM Converge / GEM Guidance; makes sure the right magazine is in when a bullet is created).
  */
 #define GEM_NAME    "GEM Overcharge"
-#define GEM_VERSION "1.0"
-#define GEM_FILE    L"gem_overcharge"
+#define GEM_VERSION "1.1"
 #define GEM_SECT    L"overcharge"
 #include "../common/gem_common.h"
 
@@ -80,7 +79,7 @@ static int find_weapon_item_slot(void)
 {
     uint8_t *vt = find_vtable(".?AVeAmmo@Weapon@Actor@@");
     if (!vt) { logf_("eAmmo: vftable not found"); return 0; }
-    uint8_t *f = *(uint8_t **)(vt + 8);
+    uint8_t *f = vt_slot_orig(vt, 1, "eAmmo");
     if (!in_text(f)) { logf_("eAmmo: slot 1 not in .text"); return 0; }
     uint8_t *ld = find_bytes(f, 0x10, (const uint8_t *)"\x48\x8B\x49\x08", 4);
     uint8_t *jm = find_bytes(f, 0x14, (const uint8_t *)"\xFF\x60", 2);
@@ -147,7 +146,7 @@ static int find_linked(void)
 {
     uint8_t *vt = find_vtable(".?AUeCondition_Linked@Interaction@@");
     if (!vt) { logf_("linked: vftable not found"); return 0; }
-    uint8_t *f = *(uint8_t **)(vt + 8);
+    uint8_t *f = vt_slot_orig(vt, 1, "linked");
     if (!in_text(f)) { logf_("linked: eval not in .text"); return 0; }
     /* mov eax,[ent+d32] ([41] 8B modrm mod=10 reg=eax) ; shr eax,1Ch (C1 E8 1C) ; ... mov rax,[ent+d32] (48/49 8B modrm) ; mov rdx,[rax+d8] (48 8B 50 xx)
        (game: ent in rcx; editor: ent in r9, after an assert) */
@@ -413,6 +412,7 @@ static int setup(int install)
     if (install && !install_hook_at("SpawnBullet", (void *)g_spawnBullet, (void *)hook_spawn_bullet, (void **)&g_spawnBulletOrig))
         logf_("SpawnBullet hook failed: a synced bullet spawned outside Launch may fire the standard round");
     logf_("overcharge ammo swap           ON (unit tag \"%s\" -> ammo name tag \"%s\", 1 round per shot)", g_ocTag, g_ocSuffix);
+    log_mp_note(1);
     return 1;
 }
 
@@ -426,30 +426,27 @@ static void read_config(void)
 }
 
 #ifndef GEM_TEST
-__declspec(dllexport) const char *GemHookVersion(void) { return GEM_NAME " " GEM_VERSION; }
-
-BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
+/* called from gem_weaponscript.c DllMain; 1 = feature ON */
+int overcharge_init(void)
 {
-    (void)reserved;
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
-        InitializeCriticalSection(&g_logLock);
-        const wchar_t *exe;
-        if (gem_open(h, &exe)) {
-            read_config();
-            setup(1);
-        }
+    int on = 0;
+    if (gem_module_open()) {
+        read_config();
+        on = setup(1);
     }
-    return TRUE;
+    gem_module_close();
+    return on;
 }
 #else
-int overcharge_selftest(uint8_t *base, void ***hooked, int *nhooked)
+int overcharge_selftest(uint8_t *base, const char *exePath, void ***hooked, int *nhooked, GemFound *found)
 {
+    gem_test_reset();
+    g_testExe = exePath;
     get_sections(base);
     read_config();
-    g_nhooked = 0;
     int r = setup(1);
     *hooked = g_hooked; *nhooked = g_nhooked;
+    gem_found(found);
     return r;
 }
 #endif

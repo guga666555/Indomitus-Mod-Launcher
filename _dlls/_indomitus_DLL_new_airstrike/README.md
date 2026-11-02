@@ -24,6 +24,8 @@ proxy dropped into `binaries\x64`. 0.7 is the same feature as a **plain DLL the 
 | BombFallback | read, never used | removed (a bay-action name is no entity; nothing to fall back to) |
 | trampolines | RWX | RX |
 | logs | finder results | + `patched:` line per patched address (for the other payload DLLs' logs) |
+| unused finders | eWeaponFire command, WeaponStop, eTarget, Tags ctor were required but never used | removed (5 fewer ways to end up `OFF`) |
+| run lifetime | a run lived until its entity address was reused | a run / parsed order silent for 5 s is dropped; shooter re-validated and magazine re-read before every release; finished run forgotten after the drop step |
 
 Nothing in the engine-facing logic (finders, lead computation, release, altitude) was changed.
 
@@ -35,6 +37,7 @@ Nothing in the engine-facing logic (finders, lead computation, release, altitude
 | `gem_bombbay.ini` | settings, next to the dll (payload folder). Sealed into the launcher. |
 | `build.bat` | `build.bat` → `dist\gem_bombbay.dll`; `build.bat test` → `dist\bb_test.exe`; `build.bat payload` → copies dll + ini into `..\..\launcher\payload\`. Uses the repo's portable zig (`..\..\zig\zig.exe`), else zig on PATH, else `python -m ziglang`. |
 | `_bckp\0.6_vcomp_proxy\` | the studied 0.6 drop (README, ini, `VCOMP140.dll`, `gem_converge.c`, `build.cmd`) |
+| `.gitignore` | `dist\`, `.zig-cache\` (created when build.bat has to work around a broken global zig cache), `build_log.txt`, a stray `zig\` copy |
 
 Runtime: `gem_bombbay.log` written next to the dll at every launch
 (`%LocalAppData%\Indomitus Launcher\payload\<fingerprint8>\gem_bombbay.log`).
@@ -44,6 +47,10 @@ Runtime: `gem_bombbay.log` written next to the dll at every launch
 ```
 build.bat payload        (then build_zig.bat in the launcher repo root -> new dist\Indomitus Launcher.exe, new fingerprint)
 ```
+`build.bat` writes `build_log.txt` next to itself and keeps the window open. If zig's global cache
+(`%LocalAppData%\zig`) is corrupt ("sub-compilation of mingw-w64 mingw32.lib failed … .obj: FileNotFound") it retries
+with a fresh cache in `.zig-cache\`; deleting `%LocalAppData%\zig` fixes it for every zig build, the launcher's included.
+
 Offline check after a game patch (no hooks installed, prints what every finder resolved):
 ```
 build.bat test

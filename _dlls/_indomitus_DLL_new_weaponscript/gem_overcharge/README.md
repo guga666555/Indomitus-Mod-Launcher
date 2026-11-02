@@ -1,6 +1,6 @@
-# GEM Overcharge 1.0 — ammo swap by unit tag
+# GEM Overcharge 1.1 — ammo swap by unit tag
 
-`gem_overcharge.dll` + `gem_overcharge.ini`. Shared code: `..\common\gem_common.h`. Integration: `..\README.md`.
+Module `gem_overcharge.c` of **`gem_weaponscript.dll`**; settings in the `[overcharge]` section of `gem_weaponscript.ini`. Shared code: `..\common\gem_common.h`. Launcher integration / install: `..\README.md`.
 
 ## What it does
 
@@ -63,7 +63,7 @@ Layout: stuff registry = global `{begin, end}` of eStuff* (exe+0x157B248 game), 
 +0xEC8 = `{tag}` Tags (vector +0x11E0); entity tag container: self pointers +0x308/+0x310, Tag vector
 +0x318/+0x320; linked: [entity+0x1C0] bit 28, [entity+0x560] → link, link+8 = vehicle.
 
-## ini (`[overcharge]`)
+## ini (`[overcharge]` section of `gem_weaponscript.ini`)
 
 | key | shipped | default | meaning |
 |---|---|---|---|
@@ -71,7 +71,7 @@ Layout: stuff registry = global `{begin, end}` of eStuff* (exe+0x157B248 game), 
 | `OverchargeTag` | overcharge | overcharge | unit / vehicle script tag |
 | `OverchargeSuffix` | overcharge | overcharge | extra name tag of the alternate ammo |
 | `OverchargeLog` | 10 | 10 | first N swap/shot lines |
-| `LogFile` / `Verbose` / `Console` | 1/1/0 | same | |
+| `Verbose` | 1 | 1 | log the lines above (`LogFile` / `Console` are in `[weaponscript]`) |
 
 Log: `"plasmagun_mag ammo" -> "plasmagun_mag overcharge ammo"` per new ammo, then
 `shot: magazine 10 -> 9 (engine took 0 in Launch, dll 1; 1 SpawnBullet call(s) inside Launch)`.
@@ -81,4 +81,4 @@ Log: `"plasmagun_mag ammo" -> "plasmagun_mag overcharge ammo"` per new ammo, the
 Feature tested in the editor in the old combined dll (0.4.5+): overcharge rounds penetrate and damage with the
 overcharge values, all IG / chaos / nurgle plasma guns and both vehicle shells swap, one round per shot.
 Not tested in multiplayer.
-This split build: offline chain test only (`..\test`), not yet run in game.
+1.1 (module of gem_weaponscript.dll, launcher payload build): offline chain test only (`..\test`, incl. entries pre-patched by sibling payload dlls), not yet built on the PC nor run in game through the launcher.

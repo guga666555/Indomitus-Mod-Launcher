@@ -1,6 +1,6 @@
-# GEM Guidance 1.0 — fire-and-forget lock-on + drift
+# GEM Guidance 1.1 — fire-and-forget lock-on + drift
 
-`gem_guidance.dll` + `gem_guidance.ini`. Shared code: `..\common\gem_common.h`. Integration: `..\README.md`.
+Module `gem_guidance.c` of **`gem_weaponscript.dll`**; settings in the `[guidance]` section of `gem_weaponscript.ini`. Shared code: `..\common\gem_common.h`. Launcher integration / install: `..\README.md`.
 
 ## What it does
 
@@ -58,7 +58,7 @@ Finders: `Bullet::Launch` via the `Invalid bullet velocity - %g` assert; `Bullet
 | `Bullet::Launch(bullet, pos, vel, gravity)` | exe+0x8327B0 | exe+0x6B5DB0 | exe+0x647DC0 |
 | `Bullet::Quant(bullet)` | exe+0x833DE0 | exe+0x6B73C0 | exe+0x6493F0 |
 
-## ini (`[guidance]`)
+## ini (`[guidance]` section of `gem_weaponscript.ini`)
 
 | key | shipped | default | meaning |
 |---|---|---|---|
@@ -68,7 +68,7 @@ Finders: `Bullet::Launch` via the `Invalid bullet velocity - %g` assert; `Bullet
 | `LockLog` | 10 | 10 | first N locks logged |
 | `DriftMax` | 45 | 45 | largest N accepted in `drift_N` |
 | `AllowMultiplayer` | 1 | 0 | 0 = no lock-on in network games (drift always applies) |
-| `LogFile` / `Verbose` / `Console` | 1/1/0 | same | |
+| `Verbose` | 1 | 1 | log the lines above (`LogFile` / `Console` are in `[weaponscript]`) |
 
 Log with `Verbose=1`: `lock:` (what was locked, number of hit records), `lock tick:` (engine guidance or dll
 steering), `lock end:` (ticks flown, distance from the target, distance flown, drift offset).
@@ -78,4 +78,4 @@ steering), `lock end:` (ticks flown, distance from the target, distance flown, d
 Feature tested in the editor in the old combined dll: lock-on (HKM Taurox / Chimera: fire at a vehicle, aim away,
 missile hits) and drift (`drift_1`: 14-unit offset over 2784 flown, hit). Not yet tested: the AI firing in a real
 match, moving targets, whether the engine's 10°/s turn limit loses fast crossing targets.
-This split build: offline chain test only (`..\test`), not yet run in game.
+1.1 (module of gem_weaponscript.dll, launcher payload build): offline chain test only (`..\test`, incl. entries pre-patched by sibling payload dlls), not yet built on the PC nor run in game through the launcher.

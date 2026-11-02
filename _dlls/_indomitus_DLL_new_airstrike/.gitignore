@@ -1,0 +1,6 @@
+dist/
+.zig-cache/
+build_log.txt
+zig/
+*.lib
+*.pdb

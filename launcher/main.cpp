@@ -1,19 +1,25 @@
-// GEM Launcher - DLL injector launcher for Call to Arms: Gates of Hell (GEM 2, x64)
+// Indomitus Launcher - starts Call to Arms: Gates of Hell (GEM 2, x64) with the Indomitus engine
+// extension DLLs loaded into it.
 //
-// Shows a small window with two buttons (Launch Game / Launch Editor), with hover and click
-// sounds. Picking one starts the exe suspended, queues LoadLibraryW(dll) as an APC on its main
-// thread ("early bird": runs during loader init, before the game's entry point), resumes it,
-// verifies the DLL is loaded and then hides itself until the game exits.
+// What it does, in order:
+//   1. Extracts the sealed payload (DLLs + inis compiled into this exe, SHA-256 checked) to
+//      %LocalAppData%\Indomitus Launcher\payload\<fingerprint>\.
+//   2. Checks for a newer launcher (signed update.ini on a static https host) and offers it.
+//   3. On Play / Editor: makes sure Steam is running and logged in, switches the required mods on in
+//      the game profile, starts the exe suspended, queues LoadLibraryW(dll) as an APC on its main
+//      thread ("early bird": runs during loader init, before the game's entry point), resumes it,
+//      verifies every DLL is in, then hides itself until the game exits.
 //
-// Command line:  --game | --editor  skip the window      --dll <path>  --exe <path>
-//                --editor-exe <path>  --mode watch (game only)  --console  -- <args for the game>
+// Settings come from gem_launcher.ini compiled in at build time (launcher\settings.gen.ini); nothing
+// ships next to the exe. Command line: --game | --editor (skip the window), --console, --no-wait,
+// -- <args for the game>. DEV builds also take --exe --editor-exe --appid --dll-dir and read a
+// gem_launcher.ini next to the exe.
 //
-// Builds with MSVC (CMake) or mingw-w64 via zig (build_zig.bat). x64 only.
+// Built with zig (clang + mingw-w64) by build_zig.bat. x64 only.
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
-#include <commctrl.h>
 #include <mmsystem.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -42,19 +48,6 @@
 #  if __has_include("update_pubkey.h")
 #    include "update_pubkey.h"
 #  endif
-#endif
-
-#ifdef _MSC_VER
-#pragma comment(lib, "shlwapi.lib")
-#pragma comment(lib, "psapi.lib")
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "winmm.lib")
-#pragma comment(lib, "msimg32.lib")
-#pragma comment(lib, "bcrypt.lib")
 #endif
 
 // ================================================================ logging
@@ -114,7 +107,7 @@ static int Fail(int code, const wchar_t* fmt, ...)
     std::wstring msg = Format(fmt, ap);
     va_end(ap);
     Log(L"ERROR: %ls", msg.c_str());
-    MessageBoxW(nullptr, (msg + L"\n\nSee gem_launcher.log for details.").c_str(), L"GEM Launcher", MB_ICONERROR | MB_OK);
+    MessageBoxW(nullptr, (msg + L"\n\nSee gem_launcher.log for details.").c_str(), L"Indomitus", MB_ICONERROR | MB_OK);
     return code;
 }
 
@@ -142,7 +135,6 @@ struct Config {
     std::wstring fingerprint;  // short hash of the embedded payload
     std::wstring args;
     std::wstring appid = L"400750";
-    std::wstring mode  = L"spawn";   // spawn | watch  (watch = game only)
     std::wstring soundHover, soundClick;   // "embedded", "none", or a .wav path
     std::vector<std::wstring> requireMods; // mod folder names to enable in the profile before launch
     bool         modsExclusive = false;    // true = enable ONLY those
@@ -154,7 +146,6 @@ struct Config {
     std::wstring subtitle;                 // line under the title (ini: subtitle=)
     std::wstring titleFont;                // face name override; empty = embedded TTF, else Impact
     int          titleSize = 52;
-    DWORD timeoutMs    = 60000;
     bool  requireSteam   = true;   // ini: require_steam=
     bool  steamAutostart = true;   // ini: steam_autostart=
     DWORD steamTimeoutMs = 120000; // ini: steam_timeout_ms=
@@ -219,7 +210,7 @@ static bool LoadSettings(const std::wstring& dir)
     return true;
 }
 
-static std::wstring ReadIni(const std::wstring&, const wchar_t* key, const wchar_t* def = L"")
+static std::wstring ReadIni(const wchar_t* key, const wchar_t* def = L"")
 {
     for (const auto& kv : g_settings) if (_wcsicmp(kv.first.c_str(), key) == 0) return kv.second;
     return def;
@@ -823,7 +814,8 @@ static LPTHREAD_START_ROUTINE LoadLibraryAddr()
     return k32 ? (LPTHREAD_START_ROUTINE)GetProcAddress(k32, "LoadLibraryW") : nullptr;
 }
 
-// APCs are delivered in the order they were queued, so the DLL list order is the load order.
+// APCs are delivered in the order they were queued, so the DLL list order is the load order. The path
+// strings stay allocated in the game: LoadLibraryW reads them after we have resumed the thread.
 static bool InjectEarlyBird(HANDLE hProcess, HANDLE hThread, const std::vector<std::wstring>& dlls)
 {
     auto fn = (PAPCFUNC)LoadLibraryAddr();
@@ -837,25 +829,6 @@ static bool InjectEarlyBird(HANDLE hProcess, HANDLE hThread, const std::vector<s
         }
         Log(L"queued LoadLibraryW APC for %ls", PathFindFileNameW(dll.c_str()));
     }
-    return true;
-}
-
-static bool InjectRemoteThread(HANDLE hProcess, const std::wstring& dll)
-{
-    LPVOID remote = WriteRemoteString(hProcess, dll);
-    if (!remote) return false;
-    auto fn = LoadLibraryAddr();
-    if (!fn) { Log(L"LoadLibraryW not found"); return false; }
-    HANDLE th = CreateRemoteThread(hProcess, nullptr, 0, fn, remote, 0, nullptr);
-    if (!th) { Log(L"CreateRemoteThread failed: %ls", LastErrorText().c_str()); return false; }
-    DWORD w = WaitForSingleObject(th, 15000);
-    DWORD exit = 0;
-    GetExitCodeThread(th, &exit);
-    CloseHandle(th);
-    VirtualFreeEx(hProcess, remote, 0, MEM_RELEASE);
-    if (w != WAIT_OBJECT_0) { Log(L"remote LoadLibraryW did not return in 15 s"); return false; }
-    if (exit == 0) { Log(L"remote LoadLibraryW returned NULL (missing dependency? wrong bitness? DllMain returned FALSE?)"); return false; }
-    Log(L"remote LoadLibraryW ok (hmodule low32 = 0x%08X)", exit);
     return true;
 }
 
@@ -983,7 +956,7 @@ static int WaitAndLogExit(HANDLE hProcess)
     return (int)code;
 }
 
-// ---------------------------------------------------------------- watch mode (game only)
+// ---------------------------------------------------------------- running processes
 
 static DWORD FindProcessByName(const wchar_t* exeName)
 {
@@ -1046,33 +1019,6 @@ static bool StartSteamClient()
     }
     Log(L"steam.exe not found in the registry, trying steam://open/main");
     return (INT_PTR)ShellExecuteW(nullptr, L"open", L"steam://open/main", nullptr, nullptr, SW_SHOWNORMAL) > 32;
-}
-
-static int RunWatch(const Config& cfg)
-{
-    const wchar_t* exeName = PathFindFileNameW(cfg.exe.c_str());
-    if (FindProcessByName(exeName)) Log(L"%ls is already running; attaching to it", exeName);
-    else {
-        std::wstring url = L"steam://rungameid/" + cfg.appid;
-        Log(L"launching via %ls", url.c_str());
-        ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    }
-    DWORD start = GetTickCount(), pid = 0;
-    while (!(pid = FindProcessByName(exeName))) {
-        if (GetTickCount() - start > cfg.timeoutMs) return Fail(5, L"Timed out waiting for %ls to start.", exeName);
-        Sleep(50);
-    }
-    Log(L"found pid %u", pid);
-    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
-                                  PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE, FALSE, pid);
-    if (!hProcess) return Fail(6, L"Could not open the game process:\n%ls", LastErrorText().c_str());
-    for (int i = 0; i < 100 && !IsModuleLoaded(hProcess, L"kernel32.dll"); ++i) Sleep(20);
-    for (const auto& dll : cfg.dlls) {
-        if (!InjectRemoteThread(hProcess, dll)) { CloseHandle(hProcess); return Fail(7, L"Injection of %ls into the running game failed.", PathFindFileNameW(dll.c_str())); }
-        Log(L"verified: %ls loaded = %ls", PathFindFileNameW(dll.c_str()), IsModuleLoaded(hProcess, dll) ? L"yes" : L"no");
-    }
-    if (!cfg.waitForExit) { CloseHandle(hProcess); return 0; }
-    return WaitAndLogExit(hProcess);
 }
 
 // ================================================================ sounds
@@ -1512,8 +1458,7 @@ static std::wstring g_statusKey;
 static std::wstring g_statusArg;     // replaces {v} in the status text (version, percentage)
 static bool    g_statusError = false;
 static UpdateInfo* g_update = nullptr;   // newer version found by the update check (UI thread only)
-static bool    g_updateBlocked = false;  // this version is below the manifest's min_version and was not updated
-static bool    g_updateRequired = false; // the update found is required (this version < its min_version)
+static bool    g_updateBlocked = false;  // a newer launcher is required (min_version): Play/Editor stay off until it is installed
 static std::wstring g_toastKey, g_toastArg;  // small notice under the language picker ("Checking for updates…")
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
@@ -2547,7 +2492,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LAUNCH_ABORTED:
         g_busy = false;
         InterlockedExchange(&g_cancel, 0);
-        if (g_updateRequired) g_updateBlocked = true;   // a required update that failed or was cancelled still blocks play
         if (g_quitWhenIdle) { DestroyWindow(hwnd); return 0; }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -2563,10 +2507,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         delete g_update;
         g_update = (UpdateInfo*)lp;
         bool required = !g_update->minVersion.empty() && VersionCompare(g_cfg.version, g_update->minVersion) < 0;
-        g_updateRequired = required;
+        if (required) { g_updateBlocked = true; g_hover = -1; }   // whatever happens next, this version may not start the game
         if (g_busy || !IsWindowVisible(hwnd)) {   // a launch is already under way: offered on the next start
             Log(L"update v%ls found while busy - not offered now", g_update->version.c_str());
-            if (required) g_updateBlocked = true;  // no further launches from this session
             return 0;
         }
         UINT rtl = g_langMeta[g_lang].rtl ? (MB_RTLREADING | MB_RIGHT) : 0;
@@ -2574,7 +2517,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         int answer = MessageBoxW(hwnd, text.c_str(), T(L"upd_title").c_str(), MB_YESNO | MB_ICONQUESTION | rtl);
         Log(L"update v%ls offered%ls: %ls", g_update->version.c_str(), required ? L" (required)" : L"", answer == IDYES ? L"yes" : L"no");
         if (answer == IDYES) StartUpdateDownload();
-        else if (required) { g_updateBlocked = true; g_hover = -1; SetStatusArg(L"st_upd_required", g_update->version, true); }
+        else if (required) SetStatusArg(L"st_upd_required", g_update->version, true);
         else SetStatusArg(L"st_upd_available", g_update->version);
         return 0;
     }
@@ -2673,20 +2616,18 @@ static int RealMain(int argc, wchar_t** argv)
     if (g_log) fwrite("\xEF\xBB\xBF", 1, 3, g_log);
 
     Config& cfg = g_cfg;
-    std::wstring ini;   // unused: settings come from the embedded copy
     if (LoadSettings(g_dir)) {
-        cfg.exe        = ReadIni(ini, L"exe");
-        cfg.editorExe  = ReadIni(ini, L"editor_exe");
+        cfg.exe        = ReadIni(L"exe");
+        cfg.editorExe  = ReadIni(L"editor_exe");
 #ifdef DEV_BUILD
-        cfg.dllDir     = ReadIni(ini, L"dll_dir", L"dlls");
+        cfg.dllDir     = ReadIni(L"dll_dir", L"dlls");
 #endif
-        cfg.args       = ReadIni(ini, L"args");
-        cfg.appid      = ReadIni(ini, L"appid", L"400750");
-        cfg.mode       = ReadIni(ini, L"mode", L"spawn");
-        cfg.soundHover = ReadIni(ini, L"sound_hover", L"embedded");
-        cfg.soundClick = ReadIni(ini, L"sound_click", L"embedded");
+        cfg.args       = ReadIni(L"args");
+        cfg.appid      = ReadIni(L"appid", L"400750");
+        cfg.soundHover = ReadIni(L"sound_hover", L"embedded");
+        cfg.soundClick = ReadIni(L"sound_click", L"embedded");
         {
-            std::wstring list = ReadIni(ini, L"require_mods");
+            std::wstring list = ReadIni(L"require_mods");
             size_t p0 = 0;
             while (p0 <= list.size()) {
                 size_t c = list.find(L',', p0); if (c == std::wstring::npos) c = list.size();
@@ -2696,25 +2637,24 @@ static int RealMain(int argc, wchar_t** argv)
                 if (!item.empty()) cfg.requireMods.push_back(item);
                 p0 = c + 1;
             }
-            cfg.modsExclusive = ReadIni(ini, L"mods_exclusive", L"0") == L"1";
-            cfg.modsProfile   = ReadIni(ini, L"mods_profile");
+            cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
+            cfg.modsProfile   = ReadIni(L"mods_profile");
         }
-        cfg.showModFolderButton = ReadIni(ini, L"show_mod_folder_button", L"1") != L"0";
-        cfg.showDisableModsButton = ReadIni(ini, L"show_disable_mods_button", L"1") != L"0";
-        cfg.version    = ReadIni(ini, L"version");
-        cfg.buildLabel = ReadIni(ini, L"build_label");
-        cfg.subtitle   = ReadIni(ini, L"subtitle", L"GEM engine extension launcher");
-        cfg.titleFont  = ReadIni(ini, L"title_font");
-        cfg.titleSize  = _wtoi(ReadIni(ini, L"title_size", L"52").c_str());
+        cfg.showModFolderButton = ReadIni(L"show_mod_folder_button", L"1") != L"0";
+        cfg.showDisableModsButton = ReadIni(L"show_disable_mods_button", L"1") != L"0";
+        cfg.version    = ReadIni(L"version");
+        cfg.buildLabel = ReadIni(L"build_label");
+        cfg.subtitle   = ReadIni(L"subtitle", L"GEM engine extension launcher");
+        cfg.titleFont  = ReadIni(L"title_font");
+        cfg.titleSize  = _wtoi(ReadIni(L"title_size", L"52").c_str());
         if (cfg.titleSize < 20 || cfg.titleSize > 120) cfg.titleSize = 52;
-        cfg.timeoutMs   = (DWORD)_wtoi(ReadIni(ini, L"timeout_ms", L"60000").c_str());
-        cfg.waitForExit = ReadIni(ini, L"wait_for_exit", L"1") != L"0";
-        cfg.requireSteam   = ReadIni(ini, L"require_steam", L"1") != L"0";
-        cfg.steamAutostart = ReadIni(ini, L"steam_autostart", L"1") != L"0";
-        cfg.steamTimeoutMs = (DWORD)_wtoi(ReadIni(ini, L"steam_timeout_ms", L"120000").c_str());
+        cfg.waitForExit = ReadIni(L"wait_for_exit", L"1") != L"0";
+        cfg.requireSteam   = ReadIni(L"require_steam", L"1") != L"0";
+        cfg.steamAutostart = ReadIni(L"steam_autostart", L"1") != L"0";
+        cfg.steamTimeoutMs = (DWORD)_wtoi(ReadIni(L"steam_timeout_ms", L"120000").c_str());
         if (cfg.steamTimeoutMs < 10000) cfg.steamTimeoutMs = 10000;
-        g_console       = ReadIni(ini, L"console", L"0") == L"1";
-        cfg.updateUrl   = ReadIni(ini, L"update_url");
+        g_console       = ReadIni(L"console", L"0") == L"1";
+        cfg.updateUrl   = ReadIni(L"update_url");
     } else {
         cfg.subtitle = L"GEM engine extension launcher";
         cfg.soundHover = L"embedded";
@@ -2724,26 +2664,25 @@ static int RealMain(int argc, wchar_t** argv)
     int direct = 0;   // 0 = show window, 1 = game, 2 = editor
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
-        auto next = [&](std::wstring& dst) { if (i + 1 < argc) dst = argv[++i]; };
-        if      (a == L"--exe")        next(cfg.exe);
-        else if (a == L"--editor-exe") next(cfg.editorExe);
-#ifdef DEV_BUILD
-        else if (a == L"--dll-dir")    next(cfg.dllDir);
-#endif
-        else if (a == L"--mode")       next(cfg.mode);
-        else if (a == L"--appid")      next(cfg.appid);
-        else if (a == L"--game")       direct = 1;
+        if      (a == L"--game")       direct = 1;
         else if (a == L"--editor")     direct = 2;
         else if (a == L"--no-wait")    cfg.waitForExit = false;
         else if (a == L"--console")    g_console = true;
         else if (a == L"--updated")    { /* handled above */ }
         else if (a == L"--") { for (++i; i < argc; ++i) { if (!cfg.args.empty()) cfg.args += L" "; cfg.args += argv[i]; } }
-        else return Fail(1, L"Unknown option: %ls\n\nOptions: --game --editor --exe <path> --editor-exe <path>\n--mode spawn|watch --appid <id> --no-wait --console -- <game args>", a.c_str());
+#ifdef DEV_BUILD
+        // Release builds are sealed: which exe gets the extension is decided at build time, not on the command line.
+        else if (a == L"--exe")        { if (i + 1 < argc) cfg.exe = argv[++i]; }
+        else if (a == L"--editor-exe") { if (i + 1 < argc) cfg.editorExe = argv[++i]; }
+        else if (a == L"--appid")      { if (i + 1 < argc) cfg.appid = argv[++i]; }
+        else if (a == L"--dll-dir")    { if (i + 1 < argc) cfg.dllDir = argv[++i]; }
+#endif
+        else return Fail(1, L"Unknown option: %ls\n\nOptions: --game  --editor  --no-wait  --console  -- <game args>", a.c_str());
     }
 
     if (g_console) {
         AllocConsole();
-        SetConsoleTitleW(L"GEM Launcher");
+        SetConsoleTitleW(L"Indomitus");
         (void)freopen("CONOUT$", "w", stdout);
     }
 
@@ -2760,7 +2699,7 @@ static int RealMain(int argc, wchar_t** argv)
 
     if (cfg.exe.empty()) {
         cfg.exe = FindGameExe(cfg.appid);
-        if (cfg.exe.empty()) return Fail(1, L"Gates of Hell was not found through Steam.\nSet exe= in gem_launcher.ini.");
+        if (cfg.exe.empty()) return Fail(1, L"Gates of Hell was not found in your Steam library.\nInstall it through Steam, start it once, then try again.");
         Log(L"auto-detected game: %ls", cfg.exe.c_str());
     } else cfg.exe = MakeAbsolute(g_dir, cfg.exe);
     if (cfg.editorExe.empty()) cfg.editorExe = DirOf(cfg.exe) + L"\\call_to_arms_ed.exe";
@@ -2775,13 +2714,14 @@ static int RealMain(int argc, wchar_t** argv)
     Log(L"editor = %ls", cfg.editorExe.c_str());
     for (const auto& m : cfg.requireMods) Log(L"mod    = %ls%ls", m.c_str(), cfg.modsExclusive ? L" (exclusive)" : L"");
     for (const auto& d : cfg.dlls) Log(L"dll    = %ls", d.c_str());
-    Log(L"mode   = %ls", cfg.mode.c_str());
     Log(L"shown  = %ls %ls", cfg.buildLabel.c_str(), cfg.version.c_str());
     Log(L"update = %ls", cfg.updateUrl.empty() ? L"(off)" : cfg.updateUrl.c_str());
 
     int rc = 0;
-    if (direct == 1 && cfg.mode == L"watch") rc = RunWatch(cfg);
-    else if (direct != 0) {
+    if (direct != 0) {   // --game / --editor: no window, same checks as the buttons
+        const std::wstring& target = direct == 2 ? cfg.editorExe : cfg.exe;
+        if (FindProcessByName(PathFindFileNameW(target.c_str())))
+            return Fail(11, L"%ls is already running.", PathFindFileNameW(target.c_str()));
         HANDLE h = nullptr;
         if (cfg.requireSteam && GetSteamState() != STEAM_READY) {
             if (!cfg.steamAutostart) { return Fail(10, L"Steam is not running or not logged in.\nStart Steam first."); }
@@ -2793,7 +2733,7 @@ static int RealMain(int argc, wchar_t** argv)
             }
             Sleep(3000);
         }
-        rc = StartAndInject(direct == 2 ? cfg.editorExe : cfg.exe, cfg.dlls, direct == 2 ? L"" : cfg.args, cfg.appid, h);
+        rc = StartAndInject(target, cfg.dlls, direct == 2 ? L"" : cfg.args, cfg.appid, h);
         if (rc == 0 && h) rc = cfg.waitForExit ? WaitAndLogExit(h) : (CloseHandle(h), 0);
     } else rc = ui::Run();
 

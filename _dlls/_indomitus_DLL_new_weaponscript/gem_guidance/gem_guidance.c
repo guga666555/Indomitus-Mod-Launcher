@@ -1,5 +1,5 @@
 /*
- * GEM Guidance 1.0  -  Call to Arms: Gates of Hell (GEM engine)
+ * GEM Guidance 1.1  -  Call to Arms: Gates of Hell (GEM engine)  -  module of gem_weaponscript.dll (Indomitus Launcher payload)
  * Fire-and-forget lock-on for guided missiles + range-dependent drift. Split out of the all-in-one GEM Converge 0.5.1.
  *
  * Per-weapon opt-ins, stuff tags:
@@ -18,8 +18,7 @@
  * swaps the locked point into the aimer's target for the duration of the engine's guidance and does the drift.
  */
 #define GEM_NAME    "GEM Guidance"
-#define GEM_VERSION "1.0"
-#define GEM_FILE    L"gem_guidance"
+#define GEM_VERSION "1.1"
 #define GEM_SECT    L"guidance"
 #include "../common/gem_common.h"
 
@@ -51,8 +50,8 @@ static int find_bullet_launch(void)
     if (!s) { logf_("Bullet::Launch: assert string not found"); return 0; }
     uint8_t *lea = find_lea_to(g_text.p, g_text.n, s, 0x15, 0);
     if (!lea) { logf_("Bullet::Launch: string xref not found"); return 0; }
-    uint8_t *f = func_start_before(lea, 0x400);
-    if (!f) { logf_("Bullet::Launch: prologue not found"); return 0; }
+    uint8_t *f = func_start_of(lea, 0x400);          /* unwind table: a sibling's entry patch does not matter */
+    if (!f) { logf_("Bullet::Launch: function start not found"); return 0; }
     g_bulletLaunch = (BulletLaunchFn)f;
     logf_("Bullet::Launch = exe+0x%llX", (unsigned long long)(f - g_base));
     return 1;
@@ -74,7 +73,7 @@ static int find_quant(void)
     for (int k = 0; k < 8 && !g_bulletQuant; k++) {
         uint8_t *use = find_lea_to(g_text.p, g_text.n, tag, 0x15, k);
         if (!use) break;
-        uint8_t *f = func_start_before(use, 0x1000);
+        uint8_t *f = func_start_of(use, 0x1000);
         if (!f) continue;
         for (int c = 0; c < 64; c++) {
             uint8_t *t = call_target(f, 0x400, c);
@@ -195,12 +194,13 @@ static void aim_point_raycast(const uint8_t *weapon, void *aimer, double *aim)
 /* SpawnBullet: for a lock_on weapon compute the lock, keep it pending while the engine creates the bullet(s)
    (GEM Converge multi-shot may spawn several inside an outer hook: each gets the lock) */
 static SpawnBulletFn g_spawnBulletOrig;
+static int g_on;                     /* all three hooks installed; until then every hook is a pass-through */
 static char hook_spawn_bullet(void *shooter, int syncIdx, float *zero, float *dir)
 {
     const uint8_t *weapon = *(const uint8_t *const *)((const uint8_t *)shooter + g_weaponOff);
     const uint8_t *stuff = weapon ? *(const uint8_t *const *)(weapon + g_stuffOff) : NULL;
     void *aimer = weapon ? *(void **)(weapon + g_aimerOff) : NULL;
-    if (!stuff || !aimer || !has_lock_tag(stuff) || (!g_allowNet && g_isNetGame && g_isNetGame()))
+    if (!g_on || !stuff || !aimer || !has_lock_tag(stuff) || (!g_allowNet && g_isNetGame && g_isNetGame()))
         return g_spawnBulletOrig(shooter, syncIdx, zero, dir);
     double aim[3];
     aim_point_raycast(weapon, aimer, aim);
@@ -215,7 +215,7 @@ static BulletLaunchFn g_bulletLaunchOrig;
 static void hook_bullet_launch(void *bullet, float *pos, float *vel, float gravity)
 {
     g_bulletLaunchOrig(bullet, pos, vel, gravity);
-    if (!g_pendingLock) return;
+    if (!g_on || !g_pendingLock) return;
     Lock *l = lock_find(bullet);
     if (!l) { for (int i = 0; i < MAX_LOCKS; i++) if (!g_locks[i].bullet) { l = &g_locks[i]; break; } }
     if (!l) return;
@@ -309,6 +309,7 @@ static void drift_tick(uint8_t *b, int n)
 static BulletQuantFn g_bulletQuantOrig;
 static char hook_bullet_quant(void *bullet)
 {
+    if (!g_on) return g_bulletQuantOrig(bullet);
     Lock *l = lock_find(bullet);
     if (!l) {
         const uint8_t *wstuff = NULL;
@@ -403,11 +404,14 @@ static int setup(int install)
     if (!ok || (install && !(install_hook_at("Bullet::Launch", (void *)g_bulletLaunch, (void *)hook_bullet_launch, (void **)&g_bulletLaunchOrig) &&
                              install_hook_at("Bullet::Quant", (void *)g_bulletQuant, (void *)hook_bullet_quant, (void **)&g_bulletQuantOrig) &&
                              install_hook_at("SpawnBullet", (void *)g_spawnBullet, (void *)hook_spawn_bullet, (void **)&g_spawnBulletOrig)))) {
-        logf_("lock-on guidance / drift       OFF (engine code not recognised)");
+        logf_("lock-on guidance / drift       OFF (engine code not recognised%s)", g_bulletLaunchOrig || g_bulletQuantOrig ? "; the hooks already in place pass straight through" : "");
         return 0;
     }
+    g_on = 1;
     logf_("lock-on guidance / drift       ON (stuff tag \"%s\" on the weapon + \"atgm\" on the ammo; fallback turn %g deg/s; drift_N up to %d deg per 100 units; multiplayer %s)",
           g_lockTag, g_lockTurn, g_driftMax, g_allowNet ? "allowed" : "off");
+    log_mp_note(1);                                   /* drift always applies, so the dll always changes the simulation */
+    if (!g_allowNet) logf_("lock-on stands down in network games (AllowMultiplayer=0); drift_N still applies there");
     return 1;
 }
 
@@ -422,31 +426,30 @@ static void read_config(void)
 }
 
 #ifndef GEM_TEST
-__declspec(dllexport) const char *GemHookVersion(void) { return GEM_NAME " " GEM_VERSION; }
-
-BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
+/* called from gem_weaponscript.c DllMain; 1 = feature ON */
+int guidance_init(void)
 {
-    (void)reserved;
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
-        InitializeCriticalSection(&g_logLock);
-        const wchar_t *exe;
-        if (gem_open(h, &exe)) {
-            read_config();
-            if (!g_lockTagLen) logf_("LockTag= is empty - nothing to do");
-            else setup(1);
-        }
+    int on = 0;
+    if (gem_module_open()) {
+        read_config();
+        if (!g_lockTagLen) logf_("LockTag= is empty - nothing to do");
+        else on = setup(1);
     }
-    return TRUE;
+    gem_module_close();
+    return on;
 }
 #else
-int guidance_selftest(uint8_t *base, void ***hooked, int *nhooked)
+int guidance_selftest(uint8_t *base, const char *exePath, void ***hooked, int *nhooked, GemFound *found)
 {
+    gem_test_reset();
+    g_testExe = exePath;
+    g_bulletLaunch = NULL; g_bulletQuant = NULL; g_getHeldItem = NULL; g_quantMs = NULL;
     get_sections(base);
     read_config();
-    g_nhooked = 0;
     int r = setup(1);
     *hooked = g_hooked; *nhooked = g_nhooked;
+    gem_found(found);
+    found->bulletLaunch = (uint8_t *)g_bulletLaunch; found->bulletQuant = (uint8_t *)g_bulletQuant;
     return r;
 }
 #endif

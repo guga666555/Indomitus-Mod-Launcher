@@ -1,35 +1,55 @@
 /*
- * gem_common.h  -  shared code of the GEM hook dlls (GEM Converge, GEM Overcharge, GEM Guidance)
+ * gem_common.h  -  shared code of the GEM WeaponScript modules (GEM Converge, GEM Overcharge, GEM Guidance)
  * for Call to Arms: Gates of Hell (GEM engine, game / editor / dedicated server exes).
+ * Indomitus Launcher payload build (1.1): one dll, gem_weaponscript.dll, injected by the launcher before the
+ * engine runs; gem_weaponscript.c holds DllMain, the log file and the ini and calls each module's <x>_init().
  *
- * Each dll is one translation unit: define GEM_NAME, GEM_VERSION, GEM_FILE (L"gem_x": ini / log base name)
- * and GEM_SECT (L"x": ini section) and include this file. Everything here is static.
+ * Each module is one translation unit: define GEM_NAME (log tag), GEM_VERSION and GEM_SECT (L"x": its ini
+ * section) and include this file. Everything here is static, so every module has its own copy of the finders
+ * and its own engine bindings - exactly as when they were three dlls - and the hooks still chain.
  *
  * Contents:
- *   logging + ini                 <dll folder>\<GEM_FILE>.log / .ini
+ *   logging + ini                 wrappers around the dll-wide log / ini in gem_weaponscript.c
  *   PE / byte-pattern helpers     every engine address is found at run time, nothing is hard-coded
- *   hook framework                14-byte inline jumps that CHAIN: several dlls may hook the same function
+ *   exe-file readers              original bytes / vftable slots read from call_to_arms*.exe ON DISK, so a
+ *                                 sibling payload dll that patched a function entry or swapped a vftable slot
+ *                                 (BreedTags, ScriptExt, NoProne, ...) never hides the engine code from us
+ *   .pdata function starts        function starts come from the exe's unwind table, never from prologue bytes
+ *   hook framework                14-byte inline jumps that CHAIN: several dlls may hook the same function;
+ *                                 patches are written with every other thread suspended and off the patched bytes
  *   shared engine finders         eBulletShooter::Launch, SpawnBullet, GetShooterBone, GetAimPoint, stuff tags
  *
- * Hook chaining contract (all three dlls follow it; see README.md):
+ * Hook chaining contract (all three modules follow it, and any other payload dll may; see README.md):
  *   the first bytes of a hooked function become  FF 25 00000000 <stub>  (+ NOP padding). The stub, in the
  *   hooking dll's own memory, is  FF 25 00000000 <hook>, "GEMHOOK1", u8 n, the n bytes that were there before.
  *   A later dll hooking the same function copies the earlier jump into its own trampoline (it is position
- *   independent), so calls run  newest hook -> ... -> oldest hook -> original code. The finders read a hooked
- *   function's original first bytes back through the stub chain (hk_original), so load order never matters.
+ *   independent), so calls run  newest hook -> ... -> oldest hook -> original code. A 14-byte jump written by
+ *   another payload dll (no GEMHOOK1 stub) is chained onto the same way.
  *
- * Build with -DGEM_TEST to get the offline finder test (test\chain_test.c) instead of a dll.
+ * Build with -DGEM_TEST to get the offline finder test (test\chain_test.c) instead of a dll. The test build
+ * uses no Win32 API at all, so it also compiles and runs on Linux (test\run_test.sh).
  */
 #ifndef GEM_COMMON_H
 #define GEM_COMMON_H
 
-#include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <math.h>
+
+#ifndef GEM_TEST
+#include <windows.h>
+#include <tlhelp32.h>
+#else
+#include <stddef.h>
+#if !defined(_WIN32)
+#include <strings.h>
+#define _strnicmp strncasecmp
+#define _stricmp  strcasecmp
+#endif
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
@@ -41,9 +61,10 @@
 /* logging / ini                                                                        */
 /* ------------------------------------------------------------------------------------ */
 static int g_verbose = 1;
-static wchar_t g_dir[MAX_PATH];
 
 #ifdef GEM_TEST
+static const char *g_testExe;          /* path of the exe under test (chain_test sets it): exe-file reads use it */
+
 static void logf_(const char *fmt, ...)
 {
     va_list ap; va_start(ap, fmt);
@@ -53,65 +74,61 @@ static void logf_(const char *fmt, ...)
 static void ini_str(const char *key, const char *def, char *out, size_t n) { (void)key; snprintf(out, n, "%s", def); }
 static int ini_int(const char *key, int def) { (void)key; return def; }
 #else
-static FILE *g_log;
-static int g_console;
-static CRITICAL_SECTION g_logLock;
+/* The dll's one log file and ini live in gem_weaponscript.c (ws_*); every module logs under its own name
+   ("[GEM Converge]", ...) and reads its own ini section ([converge], ...). */
+void ws_vlog(const char *name, const char *fmt, va_list ap);
+int  ws_ini_int(const wchar_t *sect, const char *key, int def);
+void ws_ini_str(const wchar_t *sect, const char *key, const char *def, char *out, size_t n);
 
-static void logf_(const char *fmt, ...)
-{
-    char buf[1024];
-    va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
-    SYSTEMTIME st; GetLocalTime(&st);
-    char line[1100];
-    snprintf(line, sizeof line, "%02d:%02d:%02d [" GEM_NAME "] %s\n", st.wHour, st.wMinute, st.wSecond, buf);
-    EnterCriticalSection(&g_logLock);
-    if (g_log) { fputs(line, g_log); fflush(g_log); }
-    if (g_console) { fputs(line, stdout); fflush(stdout); }
-    LeaveCriticalSection(&g_logLock);
-    OutputDebugStringA(line);
-}
-
-static void ini_path(wchar_t *ini) { wcscpy(ini, g_dir); wcscat(ini, L"\\" GEM_FILE L".ini"); }
-
-static void ini_str(const char *key, const char *def, char *out, size_t n)
-{
-    wchar_t ini[MAX_PATH]; ini_path(ini);
-    wchar_t wkey[64], wdef[256], wout[256];
-    MultiByteToWideChar(CP_ACP, 0, key, -1, wkey, 64); MultiByteToWideChar(CP_ACP, 0, def, -1, wdef, 256);
-    GetPrivateProfileStringW(GEM_SECT, wkey, wdef, wout, 256, ini);
-    WideCharToMultiByte(CP_ACP, 0, wout, -1, out, (int)n, NULL, NULL);
-}
-
-static int ini_int(const char *key, int def)
-{
-    wchar_t ini[MAX_PATH]; ini_path(ini);
-    wchar_t wkey[64]; MultiByteToWideChar(CP_ACP, 0, key, -1, wkey, 64);
-    return (int)GetPrivateProfileIntW(GEM_SECT, wkey, def, ini);
-}
+static void logf_(const char *fmt, ...) { va_list ap; va_start(ap, fmt); ws_vlog(GEM_NAME, fmt, ap); va_end(ap); }
+static void ini_str(const char *key, const char *def, char *out, size_t n) { ws_ini_str(GEM_SECT, key, def, out, n); }
+static int ini_int(const char *key, int def) { return ws_ini_int(GEM_SECT, key, def); }
 #endif /* GEM_TEST */
 
 /* ------------------------------------------------------------------------------------ */
-/* PE helpers                                                                           */
+/* PE helpers (own structs: the same parser serves the dll and the Linux test build)    */
 /* ------------------------------------------------------------------------------------ */
 typedef struct { uint8_t *p; size_t n; } Sec;
+typedef struct { char name[8]; uint32_t vsize, va, rawSize, rawPtr, relocs, lines; uint16_t nrelocs, nlines; uint32_t flags; } PeSec;   /* IMAGE_SECTION_HEADER */
+typedef struct { uint32_t begin, end, unwind; } PeRtf;                                                                               /* RUNTIME_FUNCTION   */
+#define PE_SCN_MEM_READ 0x40000000u
+
 static Sec g_text, g_rdata, g_data;
 static uint8_t *g_base;
-static uint32_t g_timestamp;
+static uint32_t g_timestamp, g_imageSize;
+static uint64_t g_prefBase;             /* ImageBase of the headers = the address the exe FILE's absolute pointers use */
+static PeSec g_secs[32];
+static int g_nsecs;
+static PeRtf *g_pdata;                  /* exception directory (unwind table), sorted by begin */
+static size_t g_npdata;
 
 /* sections of the image at base (the running exe, or the test's mapped copy: headers + sections) */
 static int get_sections(uint8_t *base)
 {
     g_base = base;
     g_text.p = g_rdata.p = g_data.p = NULL;
-    IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)g_base;
-    IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(g_base + dos->e_lfanew);
-    g_timestamp = nt->FileHeader.TimeDateStamp;
-    IMAGE_SECTION_HEADER *sh = IMAGE_FIRST_SECTION(nt);
-    for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
-        Sec s = { g_base + sh[i].VirtualAddress, sh[i].Misc.VirtualSize };
-        if (!strncmp((char *)sh[i].Name, ".text", 8)) g_text = s;
-        else if (!strncmp((char *)sh[i].Name, ".rdata", 8)) g_rdata = s;
-        else if (!strncmp((char *)sh[i].Name, ".data", 8)) g_data = s;
+    g_pdata = NULL; g_npdata = 0; g_nsecs = 0;
+    uint32_t pe = *(uint32_t *)(base + 0x3C);
+    uint8_t *nt = base + pe;
+    if (memcmp(nt, "PE\0\0", 4)) return 0;
+    uint16_t nsec = *(uint16_t *)(nt + 6), optSize = *(uint16_t *)(nt + 20);
+    g_timestamp = *(uint32_t *)(nt + 8);
+    uint8_t *opt = nt + 24;
+    if (*(uint16_t *)opt != 0x20B) return 0;                     /* PE32+ only */
+    g_prefBase = *(uint64_t *)(opt + 24);
+    g_imageSize = *(uint32_t *)(opt + 56);
+    uint32_t ndirs = *(uint32_t *)(opt + 108);
+    if (ndirs > 3) {
+        uint32_t exRva = *(uint32_t *)(opt + 112 + 3 * 8), exSize = *(uint32_t *)(opt + 112 + 3 * 8 + 4);
+        if (exRva && exSize >= sizeof(PeRtf) && exRva + exSize <= g_imageSize) { g_pdata = (PeRtf *)(base + exRva); g_npdata = exSize / sizeof(PeRtf); }
+    }
+    PeSec *sh = (PeSec *)(opt + optSize);
+    for (int i = 0; i < nsec; i++) {
+        if (g_nsecs < 32) g_secs[g_nsecs++] = sh[i];
+        Sec s = { base + sh[i].va, sh[i].vsize };
+        if (!strncmp(sh[i].name, ".text", 8)) g_text = s;
+        else if (!strncmp(sh[i].name, ".rdata", 8)) g_rdata = s;
+        else if (!strncmp(sh[i].name, ".data", 8)) g_data = s;
     }
     return g_text.p && g_rdata.p && g_data.p;
 }
@@ -119,6 +136,7 @@ static int get_sections(uint8_t *base)
 static int in_text(const void *a) { return (uint8_t *)a >= g_text.p && (uint8_t *)a < g_text.p + g_text.n; }
 static int in_rdata(const void *a) { return (uint8_t *)a >= g_rdata.p && (uint8_t *)a < g_rdata.p + g_rdata.n; }
 static int in_data(const void *a) { return (uint8_t *)a >= g_data.p && (uint8_t *)a < g_data.p + g_data.n; }
+static int in_image(const void *a) { return (uint8_t *)a >= g_base && (uint8_t *)a < g_base + g_imageSize; }
 
 static uint8_t *find_bytes(uint8_t *p, size_t n, const uint8_t *pat, size_t m)
 {
@@ -192,12 +210,107 @@ static uint8_t *find_vtable(const char *rtti)
     return hits == 1 ? vt : NULL;
 }
 
-/* function start = 'mov rax,rsp' right after int3 padding, walking back from a reference inside it */
+/* ------------------------------------------------------------------------------------ */
+/* the exe FILE on disk: the engine code as it was before any dll touched the process    */
+/* ------------------------------------------------------------------------------------ */
+/* Other payload dlls patch function entries (BreedTags / NoProne: 14-byte jmp, ScriptExt: 5-byte jmp) and swap
+   vftable slots (ScriptExt) before or after us, in alphabetical payload order. Identifying engine code by what
+   is in memory is therefore unreliable (it switched NoProne 0.4 off in every launcher run); the file is not. */
+static FILE *g_exeFile;
+static int g_exeFileTried;
+
+static int exe_file_open(void)
+{
+    if (g_exeFile) return 1;
+    if (g_exeFileTried) return 0;
+    g_exeFileTried = 1;
+#ifdef GEM_TEST
+    g_exeFile = g_testExe ? fopen(g_testExe, "rb") : NULL;
+#else
+    wchar_t p[MAX_PATH];
+    if (GetModuleFileNameW(NULL, p, MAX_PATH)) g_exeFile = _wfopen(p, L"rb");
+#endif
+    if (!g_exeFile) logf_("cannot open the exe file for reading - falling back to in-memory code (less robust against sibling dlls)");
+    return g_exeFile != NULL;
+}
+
+/* file offset of n bytes at rva, 0 = not backed by the file */
+static uint32_t rva_to_raw(uint64_t rva, size_t n)
+{
+    if (g_nsecs && rva + n <= g_secs[0].va && rva + n <= g_secs[0].rawPtr) return (uint32_t)rva;     /* headers */
+    for (int i = 0; i < g_nsecs; i++) {
+        const PeSec *s = &g_secs[i];
+        uint32_t mapped = s->rawSize < s->vsize ? s->rawSize : s->vsize;        /* bytes the loader really took from the file */
+        if (rva >= s->va && rva + n <= (uint64_t)s->va + mapped) return s->rawPtr + (uint32_t)(rva - s->va);
+    }
+    return 0;
+}
+
+static int exe_file_read(uint64_t rva, void *out, size_t n)
+{
+    if (!exe_file_open()) return 0;
+    uint32_t raw = rva_to_raw(rva, n);
+    if (!raw) return 0;
+    if (fseek(g_exeFile, (long)raw, SEEK_SET)) return 0;
+    return fread(out, 1, n, g_exeFile) == n;
+}
+
+/* the finders are done: let go of the file (each module holds its own handle) */
+static void exe_file_close(void)
+{
+    if (g_exeFile) { fclose(g_exeFile); g_exeFile = NULL; }
+    g_exeFileTried = 0;
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* function starts from the unwind table (.pdata), never from prologue bytes            */
+/* ------------------------------------------------------------------------------------ */
+/* function start = 'mov rax,rsp' right after int3 padding, walking back from a reference inside it
+   (fallback only: a sibling's entry patch breaks it) */
 static uint8_t *func_start_before(uint8_t *ref, size_t maxback)
 {
     for (uint8_t *p = ref; p > ref - maxback && p > g_text.p + 1; p--)
         if (p[-1] == 0xCC && p[0] == 0x48 && p[1] == 0x8B && p[2] == 0xC4) return p;
     return NULL;
+}
+
+/* the primary RUNTIME_FUNCTION covering rva (chained entries followed), or NULL */
+static const PeRtf *pdata_entry(uint32_t rva)
+{
+    if (!g_pdata) return NULL;
+    size_t lo = 0, hi = g_npdata;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (g_pdata[mid].end <= rva) lo = mid + 1;
+        else if (g_pdata[mid].begin > rva) hi = mid;
+        else { lo = mid; break; }
+    }
+    if (lo >= g_npdata || g_pdata[lo].begin > rva || g_pdata[lo].end <= rva) return NULL;
+    const PeRtf *e = &g_pdata[lo];
+    for (int depth = 0; depth < 16; depth++) {
+        if (e->unwind & 1) {                                            /* indirect: points at another RUNTIME_FUNCTION */
+            const PeRtf *t = (const PeRtf *)(g_base + (e->unwind & ~1u));
+            if (!in_image(t) || !in_image(t + 1)) return NULL;
+            e = t; continue;
+        }
+        const uint8_t *ui = g_base + e->unwind;
+        if (!in_image(ui) || !in_image(ui + 4)) return NULL;
+        if (!((ui[0] >> 3) & 4)) return e;                              /* UNW_FLAG_CHAININFO clear: primary entry */
+        const PeRtf *parent = (const PeRtf *)(ui + 4 + ((ui[2] + 1) & ~1) * 2);
+        if (!in_image(parent) || !in_image(parent + 1)) return NULL;
+        e = parent;
+    }
+    return NULL;
+}
+
+/* start of the function that contains ref (the exe's own view, independent of any entry patch) */
+static uint8_t *func_start_of(uint8_t *ref, size_t maxback)
+{
+    if (in_text(ref)) {
+        const PeRtf *e = pdata_entry((uint32_t)(ref - g_base));
+        if (e && in_text(g_base + e->begin)) return g_base + e->begin;
+    }
+    return func_start_before(ref, maxback);
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -210,8 +323,13 @@ typedef struct { union { char buf[16]; char *ptr; } u; size_t size, cap; } MsStr
 
 static int rd_mem(const void *src, void *dst, size_t n)
 {
+#ifdef GEM_TEST
+    memcpy(dst, src, n);
+    return 1;
+#else
     SIZE_T got = 0;
     return ReadProcessMemory(GetCurrentProcess(), src, dst, n, &got) && got == n;
+#endif
 }
 
 static int rd_msstr(const uint8_t *at, char *out, size_t n)
@@ -268,7 +386,7 @@ static uint64_t bits_d(double v) { uint64_t u; memcpy(&u, &v, 8); return u; }
 static int is_absjmp(const uint8_t *p) { return p[0] == 0xFF && p[1] == 0x25 && *(const uint32_t *)(p + 2) == 0; }
 
 /* the first 'want' (>= HK_SAVE_MAX) bytes of f as they were before any GEM hook, and how many bytes at f the
-   hooks cover. 0 = f starts with a jump that is not a GEM hook (another tool's): the original is unknown. */
+   hooks cover. 0 = f starts with a jump that is not a GEM hook (another dll's): the original is unknown here. */
 static int hk_original(const uint8_t *f, uint8_t *out, size_t want, size_t *patched)
 {
     if (want < HK_SAVE_MAX) return 0;
@@ -288,11 +406,40 @@ static int hk_original(const uint8_t *f, uint8_t *out, size_t want, size_t *patc
     return 1;
 }
 
-/* first byte of f past any GEM hook patch (pattern scans start here, so a hook's address bytes never match) */
+/* the first n (<= HK_SAVE_MAX) bytes of f as the EXE FILE has them: survives any hook by any dll. Falls back to
+   the GEM stub chain when the file cannot be read. */
+static int orig_bytes(const uint8_t *f, uint8_t *out, size_t n)
+{
+    if (n > HK_SAVE_MAX || !in_text(f)) return 0;
+    if (exe_file_read((uint64_t)(f - g_base), out, n)) return 1;
+    uint8_t b[HK_SAVE_MAX];
+    if (!hk_original(f, b, sizeof b, NULL)) return 0;
+    memcpy(out, b, n);
+    return 1;
+}
+
+/* first byte of f past any entry patch (pattern scans start here, so a hook's address bytes never match):
+   past the GEM stub chain, or past a foreign 14-byte jump + NOP padding */
 static uint8_t *hk_body(uint8_t *f)
 {
     uint8_t b[HK_SAVE_MAX]; size_t n = 0;
-    return hk_original(f, b, sizeof b, &n) ? f + n : f;
+    if (hk_original(f, b, sizeof b, &n)) return f + n;
+    if (is_absjmp(f)) { uint8_t *p = f + 14; while (p < f + HK_SAVE_MAX && *p == 0x90) p++; return p; }
+    return f;
+}
+
+/* the function a vftable slot pointed at in the exe file. A sibling dll (ScriptExt) swaps slots to its own code;
+   the engine function is still there, so we hook it and its replacement calls through into our hook. */
+static uint8_t *vt_slot_orig(const uint8_t *vt, int slot, const char *what)
+{
+    uint8_t *f = *(uint8_t **)(vt + slot * 8);
+    if (in_text(f)) return f;
+    uint64_t va = 0;
+    if (in_rdata(vt + slot * 8) && exe_file_read((uint64_t)(vt + slot * 8 - g_base), &va, 8) && va >= g_prefBase) {
+        uint8_t *g = g_base + (va - g_prefBase);
+        if (in_text(g)) { logf_("%s: vftable slot %d points outside the exe (another dll's) - using the exe file's entry exe+0x%llX", what, slot, (unsigned long long)(g - g_base)); return g; }
+    }
+    return f;
 }
 
 /* length of a hookable prologue: whole position-independent instructions until >= 14 bytes. An earlier
@@ -323,23 +470,83 @@ static size_t prolog_len(const uint8_t *f)
 }
 
 #ifdef GEM_TEST
-static void *g_hooked[16];       /* targets this dll patched (the chain test walks them) */
+static void *g_hooked[16];       /* targets this module patched (the chain test walks them) */
 static int g_nhooked;
+
+static uint8_t *hk_alloc(void) { return calloc(1, 128); }
+static void hk_seal(uint8_t *mem) { (void)mem; }
+static void hk_free(uint8_t *mem) { free(mem); }
+static int patch_code(uint8_t *f, const uint8_t *bytes, size_t n, const char *what) { (void)what; memcpy(f, bytes, n); return 1; }
+#else
+static uint8_t *hk_alloc(void) { return VirtualAlloc(NULL, 128, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE); }
+static void hk_seal(uint8_t *mem) { DWORD old; VirtualProtect(mem, 128, PAGE_EXECUTE_READ, &old); }
+static void hk_free(uint8_t *mem) { VirtualFree(mem, 0, MEM_RELEASE); }
+
+/* Write n bytes of code at f with every other thread of the process suspended and none of them stopped inside
+   [f, f+n). Under the launcher's early-bird injection (the only injection path since the 2026-11-01 launcher
+   cleanup) no other thread runs game code yet - only the loader's own worker threads exist, and one that exits
+   while we look is skipped - so this is a safety net for any other way of loading the dll. No allocation and no
+   logging happen while threads are suspended (a suspended thread may own the heap or stdio lock). */
+static int patch_code(uint8_t *f, const uint8_t *bytes, size_t n, const char *what)
+{
+    HANDLE hs[256]; int nh = 0, unsafe = 0;
+    DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) unsafe = 1;
+    else {
+        THREADENTRY32 te; te.dwSize = sizeof te;
+        if (Thread32First(snap, &te)) do {
+            if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+            if (nh >= 256) { unsafe = 1; break; }
+            HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION | SYNCHRONIZE, FALSE, te.th32ThreadID);
+            if (!h) { if (GetLastError() == ERROR_INVALID_PARAMETER) continue; unsafe = 1; break; }   /* gone since the snapshot */
+            if (SuspendThread(h) == (DWORD)-1) {
+                int gone = WaitForSingleObject(h, 0) == WAIT_OBJECT_0;
+                CloseHandle(h);
+                if (gone) continue;
+                unsafe = 1; break;
+            }
+            hs[nh++] = h;
+            CONTEXT c; memset(&c, 0, sizeof c); c.ContextFlags = CONTEXT_CONTROL;
+            if (!GetThreadContext(h, &c)) { if (WaitForSingleObject(h, 0) == WAIT_OBJECT_0) continue; unsafe = 1; break; }
+            if (c.Rip >= (uint64_t)f && c.Rip < (uint64_t)(f + n)) { unsafe = 1; break; }
+        } while (Thread32Next(snap, &te));
+        CloseHandle(snap);
+    }
+    int ok = 0; DWORD err = 0;
+    if (!unsafe) {
+        DWORD old;
+        if (VirtualProtect(f, n, PAGE_EXECUTE_READWRITE, &old)) {
+            memcpy(f, bytes, n);
+            VirtualProtect(f, n, old, &old);
+            FlushInstructionCache(GetCurrentProcess(), f, n);
+            ok = 1;
+        } else err = GetLastError();
+    }
+    for (int i = 0; i < nh; i++) { ResumeThread(hs[i]); CloseHandle(hs[i]); }
+    if (unsafe) logf_("%s: could not suspend and inspect every other thread (or one is inside the bytes to patch) - not patched", what);
+    else if (!ok) logf_("%s: VirtualProtect failed (%lu)", what, err);
+    return ok;
+}
 #endif
 
 /* Patch target to jump to hook; *orig = trampoline that runs what was there before (the original code or the
-   previous hook). Called from DllMain: the dlls must be loaded before the engine runs game code (README). */
+   previous hook). Called from DllMain: the launcher loads the dll before the engine runs game code. */
 static int install_hook_at(const char *what, void *target, void *hook, void **orig)
 {
     uint8_t *f = (uint8_t *)target;
     size_t n = prolog_len(f);
-    if (!n || n > HK_SAVE_MAX) { logf_("%s prologue not hookable - not hooking", what); return 0; }
+    if (!n || n > HK_SAVE_MAX) {
+        if (f[0] == 0xE9 || f[0] == 0xEB) logf_("%s starts with a short jump (another dll's hook) - cannot chain onto it, not hooking", what);
+        else logf_("%s prologue not hookable - not hooking", what);
+        return 0;
+    }
     uint8_t chk[HK_SAVE_MAX];
     int chained = is_absjmp(f);
-    if (chained && !hk_original(f, chk, sizeof chk, NULL)) logf_("%s is hooked by another tool - chaining onto it", what);
+    int foreign = chained && !hk_original(f, chk, sizeof chk, NULL);
 
-    uint8_t *mem = VirtualAlloc(NULL, 128, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!mem) { logf_("%s: VirtualAlloc failed", what); return 0; }
+    uint8_t *mem = hk_alloc();
+    if (!mem) { logf_("%s: stub allocation failed", what); return 0; }
     uint8_t *stub = mem + HK_STUB, *tramp = mem + HK_TRAMP;
     stub[0] = 0xFF; stub[1] = 0x25; *(uint32_t *)(stub + 2) = 0; *(uint64_t *)(stub + 6) = (uint64_t)hook;
     memcpy(stub + 14, HK_MAGIC, 8);
@@ -348,18 +555,14 @@ static int install_hook_at(const char *what, void *target, void *hook, void **or
     memcpy(tramp, f, n);
     tramp[n] = 0xFF; tramp[n + 1] = 0x25; *(uint32_t *)(tramp + n + 2) = 0;
     *(uint64_t *)(tramp + n + 6) = (uint64_t)(f + n);
-    DWORD old;
-    VirtualProtect(mem, 128, PAGE_EXECUTE_READ, &old);
-    *orig = tramp;
+    hk_seal(mem);
 
     uint8_t patch[HK_SAVE_MAX]; memset(patch, 0x90, sizeof patch);
     patch[0] = 0xFF; patch[1] = 0x25; *(uint32_t *)(patch + 2) = 0;
     *(uint64_t *)(patch + 6) = (uint64_t)stub;
-    if (!VirtualProtect(f, n, PAGE_EXECUTE_READWRITE, &old)) { logf_("%s: VirtualProtect failed (%lu)", what, GetLastError()); return 0; }
-    memcpy(f, patch, n);
-    VirtualProtect(f, n, old, &old);
-    FlushInstructionCache(GetCurrentProcess(), f, n);
-    if (chained) logf_("%s: chained onto an earlier hook", what);
+    *orig = tramp;                      /* published before the jump goes live: a thread may enter the hook at once */
+    if (!patch_code(f, patch, n, what)) { *orig = NULL; hk_free(mem); return 0; }
+    if (chained) logf_("%s: chained onto an earlier hook (%s)", what, foreign ? "another dll's 14-byte jump" : "GEM stub");
 #ifdef GEM_TEST
     if (g_nhooked < 16) g_hooked[g_nhooked++] = f;
 #endif
@@ -367,64 +570,19 @@ static int install_hook_at(const char *what, void *target, void *hook, void **or
 }
 
 /* ------------------------------------------------------------------------------------ */
-/* start-up guards                                                                      */
+/* module start-up                                                                      */
 /* ------------------------------------------------------------------------------------ */
 #ifndef GEM_TEST
-/* The old all-in-one GEM Converge (<= 0.5.1, a VCOMP140.dll proxy in binaries\x64) carries every feature of the
-   split dlls; running both would apply each effect twice. Its log prefix "[GEM Converge]" is in its image. */
-static int old_combined_loaded(void)
+/* module prologue / epilogue (one per feature, from gem_weaponscript.c's DllMain after the process-level checks):
+   [section] Enabled, Verbose, the exe's sections. open() == 0 = this feature does nothing. */
+static int gem_module_open(void)
 {
-    HMODULE m = GetModuleHandleW(L"vcomp140.dll");
-    if (!m) return 0;
-    wchar_t p[MAX_PATH], sys[MAX_PATH];
-    if (!GetModuleFileNameW(m, p, MAX_PATH)) return 0;
-    UINT ns = GetSystemDirectoryW(sys, MAX_PATH);
-    if (ns && !_wcsnicmp(p, sys, ns)) return 0;                          /* the real OpenMP runtime */
-    uint8_t *b = (uint8_t *)m;
-    IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(b + ((IMAGE_DOS_HEADER *)b)->e_lfanew);
-    IMAGE_SECTION_HEADER *sh = IMAGE_FIRST_SECTION(nt);
-    static const char k[] = "[GEM Converge]";
-    for (int i = 0; i < nt->FileHeader.NumberOfSections; i++)
-        if ((sh[i].Characteristics & IMAGE_SCN_MEM_READ) && find_bytes(b + sh[i].VirtualAddress, sh[i].Misc.VirtualSize, (const uint8_t *)k, sizeof k - 1))
-            return 1;
-    return 0;
-}
-
-/* one copy per process, even if the launcher injects the dll twice from different paths */
-static int first_instance(void)
-{
-    wchar_t name[96];
-    swprintf(name, 96, L"Local\\" GEM_FILE L"_%lu", GetCurrentProcessId());
-    HANDLE h = CreateMutexW(NULL, FALSE, name);
-    return h && GetLastError() != ERROR_ALREADY_EXISTS;
-}
-
-/* common DllMain prologue: folder, exe filter, Enabled, log. 0 = do nothing in this process. */
-static int gem_open(HMODULE self, const wchar_t **exeName)
-{
-    GetModuleFileNameW(self, g_dir, MAX_PATH);
-    wchar_t *bs = wcsrchr(g_dir, L'\\'); if (bs) *bs = 0;
-    static wchar_t exe[MAX_PATH]; GetModuleFileNameW(NULL, exe, MAX_PATH);
-    wchar_t *en = wcsrchr(exe, L'\\'); en = en ? en + 1 : exe;
-    *exeName = en;
-    if (_wcsnicmp(en, L"call_to_arms", 12)) return 0;          /* only the game / editor / server exes */
-    if (!ini_int("Enabled", 1)) return 0;
-    if (!first_instance()) return 0;
-    g_console = ini_int("Console", 0);
+    if (!ini_int("Enabled", 1)) { logf_("disabled ([%ls] Enabled=0)", GEM_SECT); return 0; }
     g_verbose = ini_int("Verbose", 1);
-    if (ini_int("LogFile", 1)) {
-        wchar_t lp[MAX_PATH]; wcscpy(lp, g_dir); wcscat(lp, L"\\" GEM_FILE L".log");
-        g_log = _wfopen(lp, L"w");
-    }
-    if (g_console) { AllocConsole(); SetConsoleTitleA(GEM_NAME); freopen("CONOUT$", "w", stdout); }
     if (!get_sections((uint8_t *)GetModuleHandleW(NULL))) { logf_("not a PE I understand"); return 0; }
-    logf_(GEM_NAME " " GEM_VERSION " loaded into %ls (timestamp %08X)", en, g_timestamp);
-    if (old_combined_loaded()) {
-        logf_("the old all-in-one GEM Converge VCOMP140.dll is loaded in this process - doing nothing (remove it from binaries\\x64)");
-        return 0;
-    }
     return 1;
 }
+static void gem_module_close(void) { exe_file_close(); }
 #endif /* GEM_TEST */
 
 /* ------------------------------------------------------------------------------------ */
@@ -439,6 +597,7 @@ typedef char    (*IsNetGameFn)(void);
 typedef int     (*NextSyncIdFn)(void);
 
 static uint8_t *g_launch;                   /* eBulletShooter::Launch (vtable slot 11) */
+static uint8_t *g_launchVt;                 /* eBulletShooter vftable */
 static SpawnBulletFn    g_spawnBullet;
 static GetShooterBoneFn g_getShooterBone;
 static BoneRefreshFn    g_boneRefresh;
@@ -459,10 +618,10 @@ static uint32_t g_ownerOff, g_ownerItemOff, g_itemFlagOff, g_aimTargetOff;
    B (editor):       mov rax,rsp ; mov [rax+8],rbx ; mov [rax+20],r9 ; mov [rax+18],r8 ; mov [rax+10],edx  (18 bytes) */
 static const uint8_t k_sbPrologA[] = { 0x48,0x89,0x5C,0x24,0x08, 0x4C,0x89,0x4C,0x24,0x20, 0x4C,0x89,0x44,0x24,0x18, 0x89,0x54,0x24,0x10 };
 static const uint8_t k_sbPrologB[] = { 0x48,0x8B,0xC4, 0x48,0x89,0x58,0x08, 0x4C,0x89,0x48,0x20, 0x4C,0x89,0x40,0x18, 0x89,0x50,0x10 };
-static int is_spawn_bullet(const uint8_t *f)        /* f may already be hooked by a sibling dll */
+static int is_spawn_bullet(const uint8_t *f)        /* f may already be hooked by a sibling dll (ours or not) */
 {
     uint8_t h[HK_SAVE_MAX];
-    if (!hk_original(f, h, sizeof h, NULL)) return 0;
+    if (!orig_bytes(f, h, sizeof h)) return 0;
     return !memcmp(h, k_sbPrologA, sizeof k_sbPrologA) || !memcmp(h, k_sbPrologB, sizeof k_sbPrologB);
 }
 /* Launch: mov rax,rsp ; mov [rax+8],rbx */
@@ -489,8 +648,9 @@ static int find_launch(void)
             if (*(uint64_t *)(g_rdata.p + j) == col) { vt = g_rdata.p + j + 8; hits++; }
     }
     if (hits != 1 || !in_rdata(vt)) { logf_("Launch: vftable %s", hits ? "ambiguous" : "not found"); return 0; }
-    uint8_t *f = *(uint8_t **)(vt + 11 * 8), head[HK_SAVE_MAX];
-    if (!in_text(f) || !hk_original(f, head, sizeof head, NULL) || memcmp(head, k_launchProlog, sizeof k_launchProlog)) { logf_("Launch: slot 11 not recognised"); return 0; }
+    g_launchVt = vt;
+    uint8_t *f = vt_slot_orig(vt, 11, "Launch"), head[HK_SAVE_MAX];
+    if (!in_text(f) || !orig_bytes(f, head, sizeof head) || memcmp(head, k_launchProlog, sizeof k_launchProlog)) { logf_("Launch: slot 11 not recognised"); return 0; }
     g_launch = f;
     g_spawnBullet = NULL; g_nextSyncId = NULL;
     uint8_t *body = hk_body(f);
@@ -652,6 +812,34 @@ static int find_aim_extras(void)
           g_ownerOff, g_ownerItemOff, g_itemFlagOff, g_aimTargetOff, (unsigned long long)(g_hitVec - g_base));
     return 1;
 }
+
+/* multiplayer note, logged once a feature is ON (the launcher ships the same payload to every player) */
+static void log_mp_note(int active)
+{
+    if (active) logf_("simulation change: every player of a multiplayer match needs this DLL (the Indomitus Launcher payload)");
+    else        logf_("network games: standing down (AllowMultiplayer=0), vanilla behaviour online");
+}
+
+#ifdef GEM_TEST
+/* what the finders located, for the chain test's foreign-hook scenarios (same layout as in test\chain_test.c) */
+typedef struct { uint8_t *launch, *spawnBullet, *bulletLaunch, *bulletQuant, *launchVt; } GemFound;
+static void gem_found(GemFound *out)
+{
+    memset(out, 0, sizeof *out);
+    out->launch = g_launch; out->spawnBullet = (uint8_t *)g_spawnBullet; out->launchVt = g_launchVt;
+}
+/* reset everything a selftest run leaves behind, so the next load order starts clean */
+static void gem_test_reset(void)
+{
+    g_nhooked = 0;
+    exe_file_close();
+    g_launch = NULL; g_launchVt = NULL; g_spawnBullet = NULL; g_getShooterBone = NULL; g_boneRefresh = NULL;
+    g_getAimPoint = NULL; g_isNetGame = NULL; g_nextSyncId = NULL; g_hitVec = NULL;
+    g_weaponOff = g_stuffOff = g_syncedOff = g_aimerOff = g_bonePosOff = g_boneXOff = 0;
+    g_stuffTagsBeg = g_stuffTagsEnd = g_aimerDirSlot = g_aimerPosSlot = 0;
+    g_ownerOff = g_ownerItemOff = g_itemFlagOff = g_aimTargetOff = 0;
+}
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop

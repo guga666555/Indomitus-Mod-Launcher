@@ -134,6 +134,55 @@ static int find_vitality(void)
 
 /* stamina fields of the vitality extender, from its stamina update (the caller of eChassisFoot::SetStaminaMovementModeLimit
    that is not the network command): lea r12,[rdi+MAX] ... addss xmm6,[rdi+MAX+4] (clamp of max / current). Optional. */
+/* ---- vitality on any chassis ----
+   The vitality extender's timer (health/stamina regen, host side) ends every tick with
+       dynamic_cast<eChassisFoot&>(entity->chassis)   -> throws std::bad_cast on any other chassis
+       eChassisFoot::SetStaminaMovementModeLimit(limit)
+   so a unit with {extender "vitality" {Health}} and a wheel/track/human_carrier chassis is a fatal error as soon as it
+   ticks (no {Stamina} block needed: the empty-limits case still gets there). Patch: the cast's throw flag
+   (mov dword [rsp+0x20],1 -> 0, the __RTDynamicCast isReference argument) and the SetStaminaMovementModeLimit call
+   redirected to a wrapper that skips a NULL chassis. The client-side path calls a base-class virtual and is fine. */
+static uint8_t *g_vitCastFlag, *g_vitSetLimitSite; static void *g_vitSetLimitFn;
+static int find_vitality_chassis(void)
+{
+    static const char lbl[] = "eChassisFoot::SetStaminaMovementModeLimit";
+    uint8_t *s = find_bytes(g_rdata.p, g_rdata.n, (const uint8_t *)lbl, sizeof lbl - 1), *lea = NULL;
+    for (uint8_t *p = g_text.p; s && p + 8 <= g_text.p + g_text.n && !lea; p++)
+        if (p[0] == 0x0F && p[1] == 0x10 && (p[2] & 0xC7) == 0x05 && p + 7 + *(int32_t *)(p + 3) == s) lea = p;
+    uint32_t sf = lea ? func_of(lea) : 0;
+    if (!sf) { logf_("vitality chassis: SetStaminaMovementModeLimit not found"); return 0; }
+    uint8_t *setLimit = g_base + sf; int n = 0;
+    for (uint8_t *p = g_text.p; p + 5 <= g_text.p + g_text.n; p++) {
+        if (p[0] != 0xE8 || p + 5 + *(int32_t *)(p + 1) != setLimit) continue;
+        uint32_t f = func_of(p);
+        if (!f || p - (g_base + f) < 0x200) continue;                /* not the network command's read handler */
+        /* ... mov dword [rsp+0x20],1 ... call __RTDynamicCast ; mov rcx,rax ; xor r8d,r8d ; mov edx,ebx ; call SetLimit */
+        if (memcmp(p - 8, "\x48\x8B\xC8\x45\x33\xC0\x8B\xD3", 8) || p[-13] != 0xE8) continue;
+        uint8_t *flag = NULL;
+        for (uint8_t *q = p - 0x50; q < p - 13; q++) if (!memcmp(q, "\xC7\x44\x24\x20\x01\x00\x00\x00", 8)) flag = q;
+        if (!flag) continue;
+        n++; g_vitCastFlag = flag + 4; g_vitSetLimitSite = p; g_vitSetLimitFn = setLimit;
+    }
+    if (n != 1) { logf_("vitality chassis: timer site not recognised (%d matches)", n); return 0; }
+    logf_("vitality chassis: vitality timer cast flag @ exe+0x%llX, SetStaminaMovementModeLimit call @ exe+0x%llX", EXE_OFF(g_vitCastFlag), EXE_OFF(g_vitSetLimitSite));
+    return 1;
+}
+#ifndef FX_TEST
+static int patch_code(uint8_t *dst, const void *src, size_t len, const char *what);          /* patch.c (included later) */
+static int redirect_call(uint8_t *e8, void *fn, void **orig, const char *what);
+typedef void (*SetLimitFn)(void *chassis, int limit, uint8_t force);
+static void fx_set_stamina_limit(void *chassis, int limit, uint8_t force)
+{
+    if (chassis) ((SetLimitFn)g_vitSetLimitFn)(chassis, limit, force);   /* not a foot chassis: nothing to limit */
+}
+static int install_vitality_chassis(void)
+{
+    uint8_t zero = 0;
+    return patch_code(g_vitCastFlag, &zero, 1, "vitality chassis (cast flag)")
+        && redirect_call(g_vitSetLimitSite, (void *)fx_set_stamina_limit, NULL, "vitality chassis (limit call)");
+}
+#endif
+
 static int find_stamina_fields(void)
 {
     static const char lbl[] = "eChassisFoot::SetStaminaMovementModeLimit";

@@ -88,14 +88,40 @@ static void install_exit_hooks(void)
     logf_("exit trace                     %d import(s) hooked (ExitProcess/TerminateProcess)", n);
 }
 
+/* readable pointer (no fault inside the exception handler) */
+static int can_read(const void *a, size_t n)
+{
+    MEMORY_BASIC_INFORMATION mi;
+    if (!a || !VirtualQuery(a, &mi, sizeof mi) || mi.State != MEM_COMMIT || (mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return 0;
+    return (const uint8_t *)a + n <= (const uint8_t *)mi.BaseAddress + mi.RegionSize;
+}
+/* MSVC x64 C++ throw: ExceptionInformation = { 0x19930520, object, ThrowInfo*, image base }. ThrowInfo -> CatchableTypeArray ->
+   CatchableType -> TypeDescriptor (name at +0x10). An engine error object derived from std::exception keeps its message
+   pointer at +8 (_Data.what). Best effort, every pointer checked. */
+static void cxx_describe(EXCEPTION_RECORD *er)
+{
+    if (er->NumberParameters < 4 || er->ExceptionInformation[0] != 0x19930520) return;
+    const uint8_t *obj = (const uint8_t *)er->ExceptionInformation[1], *ti = (const uint8_t *)er->ExceptionInformation[2], *base = (const uint8_t *)er->ExceptionInformation[3];
+    const char *name = "?", *what = NULL;
+    if (can_read(ti, 16)) {
+        const uint8_t *cta = base + *(const uint32_t *)(ti + 12);
+        if (can_read(cta, 8) && *(const int32_t *)cta > 0) {
+            const uint8_t *ct = base + *(const uint32_t *)(cta + 4);
+            if (can_read(ct, 8)) { const uint8_t *td = base + *(const uint32_t *)(ct + 4); if (can_read(td, 0x60)) name = (const char *)td + 16; }
+        }
+    }
+    if (can_read(obj, 16)) { const char *w = *(const char *const *)(obj + 8); if (can_read(w, 200)) what = w; }
+    logf_("  type %s%s%.200s", name, what ? ", what: " : "", what ? what : "");
+}
 static LONG CALLBACK fx_veh(EXCEPTION_POINTERS *ep)
 {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     static volatile LONG cxx;
-    if (code == 0xE06D7363) {                                            /* C++ throw: log the first few with their call chain */
-        if (InterlockedIncrement(&cxx) > 6) return EXCEPTION_CONTINUE_SEARCH;
+    if (code == 0xE06D7363) {                                            /* C++ throw: type, message and call chain (capped) */
+        if (InterlockedIncrement(&cxx) > 40) return EXCEPTION_CONTINUE_SEARCH;
         logf_("C++ exception thrown (thread %lu)", GetCurrentThreadId());
-        log_stack((uint64_t)(uintptr_t)ep->ContextRecord->Rsp, 10);
+        cxx_describe(ep->ExceptionRecord);
+        log_stack((uint64_t)(uintptr_t)ep->ContextRecord->Rsp, 16);
         return EXCEPTION_CONTINUE_SEARCH;
     }
     if (code != 0xC0000005 && code != 0xC000001D && code != 0xC0000096 && code != 0xC00000FD && code != 0xC0000409 &&
