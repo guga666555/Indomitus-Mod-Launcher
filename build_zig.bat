@@ -95,8 +95,8 @@ echo step: update signing tool >> "%LOG%"
 if errorlevel 1 echo   ! could not build tools\update_sign.exe - this launcher will not be able to auto-update
 if exist tools\update_sign.exe tools\update_sign.exe pubheader launcher\update_pubkey.h
 if errorlevel 1 echo   ! update key not available - this launcher will not be able to auto-update
-REM ---- version = the newest git tag like v1.2.3 (falls back to version= in gem_launcher.ini). The stamped copy,
-REM      launcher\settings.gen.ini, is what gets compiled in, so window, caption, exe and update.ini all agree.
+REM ---- settings: launcher\settings.gen.ini (a copy of gem_launcher.ini) is what gets compiled in. version= in it is
+REM      THE version (window, caption, exe, update.ini); a warning appears if it is not above the newest git tag.
 if exist launcher\settings.gen.ini del launcher\settings.gen.ini
 if exist tools\update_sign.exe tools\update_sign.exe stamp gem_launcher.ini .git launcher\settings.gen.ini
 if not exist launcher\settings.gen.ini copy /y gem_launcher.ini launcher\settings.gen.ini >nul

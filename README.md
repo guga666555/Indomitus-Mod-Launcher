@@ -43,14 +43,16 @@ needs is in this repository:
 | `_dlls\` | source of each extension DLL, each with its own README |
 
 Generated on every build and not committed: `launcher\payload.rc`, `payload.manifest`, `fonts.rc`,
-`version.rc`, `settings.gen.ini`, `update_pubkey.h` is committed (public key only).
+`version.rc`, `settings.gen.ini`. `launcher\update_pubkey.h` is generated once and committed (public key only).
 
 ## Versioning
 
-The version comes from the newest git tag named like `v0.9.4`. It appears in the window, the title
-bar, the exe's file properties and `update.ini`. `version=` in `gem_launcher.ini` is only used while
-the repository has no such tag. Tag only real releases, and only on `main`: the build takes the
-highest tag it finds, whatever branch it is on.
+`version=` in `gem_launcher.ini` is the one and only version. It appears in the window, the title bar,
+the exe's file properties and `update.ini`; use it as the GitHub release tag (`v0.9.4`). The build
+warns when it is not higher than the newest git tag.
+
+Never edit `update.ini` by hand: it is signed when it is built, and any change (even the version
+number) makes every launcher reject it.
 
 ## Auto-update (no server needed)
 
@@ -58,12 +60,14 @@ Launchers fetch `update.ini` from the newest GitHub release and offer a newer ve
 is checked against the SHA-256 and the ECDSA signature in that manifest; only manifests signed with
 the project key are accepted, so a hijacked download link cannot push someone else's exe.
 
-Release steps:
+Releasing a new version:
 
-1. Commit. In GitHub Desktop: History → right-click the commit → **Create Tag…** (`vX.Y.Z`) → Push origin.
-2. `build_zig.bat`. It prints the version and writes `dist\release\Indomitus.exe` + `update.ini`.
-3. On GitHub, draft a release from that tag, attach both files, publish it as the latest release
-   (not a pre-release). Launchers see it on their next start.
+1. Commit and push your changes (GitHub Desktop: Commit, then Push origin).
+2. Raise `version=` in `gem_launcher.ini` and **save** it.
+3. Run `build_zig.bat`. Check that it prints the version you set.
+4. On GitHub: **Draft a new release**, create the tag `v<version>` there, attach `Indomitus.exe` and
+   `update.ini` from `dist\release\`, leave "pre-release" unticked, and **Publish release**.
+   Launchers see it on their next start.
 
 Optional `update_min_version=` in `gem_launcher.ini`: launchers older than that cannot start the game
 until they update (keeps every multiplayer peer on the same extension). Offline players are never

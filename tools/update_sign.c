@@ -15,7 +15,11 @@
  * replaced or overwritten.
  *
  *   update_sign stamp <gem_launcher.ini> <.git dir> <out.ini>
- *       Copies the settings with version= taken from the newest git tag (v1.2.3); that copy is compiled in.
+ *       Copies the settings for the build (version= is the one version source) and warns when version= is not
+ *       higher than the newest git tag.
+ *
+ *   update_sign newer <a> <b>
+ *       Exit code 0 when version a is higher than b (used by publish.bat).
  *
  *   update_sign versionrc <gem_launcher.ini> <out.rc>
  *       Writes the exe's Windows version info from version= (same number as the window and update.ini).
@@ -425,18 +429,18 @@ static void newest_git_tag(const char *gitdir, char *best, size_t n, char *bestT
     }
 }
 
-/* Writes <out>: gem_launcher.ini with version= set to the newest git version tag (when there is one). This copy is what
- * gets compiled into the launcher, so the window, caption, exe properties, update.ini and the release tag all agree. */
+/* Writes <out>: the copy of gem_launcher.ini that gets compiled into the launcher. version= in gem_launcher.ini is the
+ * one source of the version (window, caption, exe properties, update.ini, release tag). The git tags are only read to
+ * warn when version= was not raised past the last tag, i.e. players would not see this build as an update. */
 static int cmd_stamp(const char *iniPath, const char *gitdir, const char *out)
 {
     size_t iniLen = 0;
     unsigned char *ini = read_all(iniPath, &iniLen, 1 << 20);
     if (!ini) { fprintf(stderr, "update_sign: cannot read %s\n", iniPath); return 1; }
-    char iniver[64], ver[64], tag[64];
-    ini_value((char *)ini, "version", iniver, sizeof iniver);
-    newest_git_tag(gitdir, ver, sizeof ver, tag, sizeof tag);
-    int fromGit = ver[0] != 0;
-    if (!fromGit) snprintf(ver, sizeof ver, "%s", iniver);
+    char ver[64], tagVer[64], tag[64];
+    ini_value((char *)ini, "version", ver, sizeof ver);
+    if (!ver[0]) { fprintf(stderr, "update_sign: version= is empty in %s\n", iniPath); free(ini); return 1; }
+    newest_git_tag(gitdir, tagVer, sizeof tagVer, tag, sizeof tag);
 
     /* copy the ini, replacing the first uncommented version= line */
     size_t cap = iniLen + 128;
@@ -480,8 +484,12 @@ static int cmd_stamp(const char *iniPath, const char *gitdir, const char *out)
         fclose(f);
     }
     free(o);
-    if (fromGit) printf("version: %s (from the newest git tag, %s)\n", ver, tag);
-    else printf("version: %s (from gem_launcher.ini - no version tags like v1.2.3 in git yet)\n", ver[0] ? ver : "(none)");
+    printf("version: %s (version= in gem_launcher.ini)\n", ver);
+    if (tagVer[0]) {
+        int c = ver_cmp(ver, tagVer);
+        if (c < 0) printf("\n  *** version=%s is LOWER than the git tag %s - launchers will not update to this build.\n\n", ver, tag);
+        else if (c == 0) printf("  note: v%s is already tagged in git - raise version= before publishing a new release.\n", ver);
+    }
     return 0;
 }
 
@@ -553,6 +561,8 @@ static int cmd_versionrc(const char *iniPath, const char *out)
 
 int main(int argc, char **argv)
 {
+    /* update_sign newer <a> <b>: exit 0 when version a is higher than b (tags like v0.9.4 accepted), 1 otherwise */
+    if (argc == 4 && !strcmp(argv[1], "newer")) return ver_cmp(argv[2], argv[3]) > 0 ? 0 : 1;
     if (argc == 4 && !strcmp(argv[1], "versionrc")) return cmd_versionrc(argv[2], argv[3]);
     if (argc == 5 && !strcmp(argv[1], "stamp")) return cmd_stamp(argv[2], argv[3], argv[4]);
     if (argc == 3 && !strcmp(argv[1], "pubheader")) return cmd_pubheader(argv[2]);
