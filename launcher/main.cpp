@@ -136,7 +136,7 @@ struct Config {
     std::wstring args;
     std::wstring appid = L"400750";
     std::wstring soundHover, soundClick;   // "embedded", "none", or a .wav path
-    std::vector<std::wstring> requireMods; // mods to enable before launch, as options.set names (found by FindMarkedMods)
+    std::vector<std::wstring> requireMods; // marked mods found when the launcher opened (log only; Play/Disable scan again)
     std::wstring modsMarker = L"[INDOMITUS_MOD_LAUNCHER]";   // ini: mods_marker= (text in a mod.info {desc ""})
     bool         modsExclusive = false;    // true = enable ONLY those
     std::wstring modsProfile;              // profile folder id; empty = most recently used
@@ -708,7 +708,9 @@ static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, con
 // Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
 static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 {
-    if (cfg.requireMods.empty()) return true;
+    // Scan again now: mod.info files may have changed since the launcher opened.
+    const std::vector<std::wstring> mods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);
+    if (mods.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) {
         // Fresh install: the game creates its profile on the first start. Don't block that start.
@@ -749,7 +751,7 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
     auto same = [](const std::string& a, const std::string& b) { return _stricmp(a.c_str(), b.c_str()) == 0; };
 
     std::vector<std::string> wanted;
-    for (const auto& m : cfg.requireMods) wanted.push_back(Utf8(m));
+    for (const auto& m : mods) wanted.push_back(Utf8(m));
 
     // Other mods keep their places (unless exclusive); the marked ones follow, in alphabetical order. An existing
     // entry keeps its ":n" suffix.
@@ -791,7 +793,8 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 static bool DisableRequiredMods(const Config& cfg, std::wstring& err, int& removed)
 {
     removed = 0;
-    if (cfg.requireMods.empty()) return true;
+    const std::vector<std::wstring> mods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);   // current mod.info files
+    if (mods.empty()) return true;
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) { err = L"profile options.set not found"; return false; }
     std::string text = ReadFileA(opt);
@@ -821,7 +824,7 @@ static bool DisableRequiredMods(const Config& cfg, std::wstring& err, int& remov
     for (const auto& e : entries) {
         std::string name = e.substr(0, e.find(':'));
         bool drop = false;
-        for (const auto& m : cfg.requireMods) if (_stricmp(name.c_str(), Utf8(m).c_str()) == 0) { drop = true; break; }
+        for (const auto& m : mods) if (_stricmp(name.c_str(), Utf8(m).c_str()) == 0) { drop = true; break; }
         if (drop) ++removed; else kept.push_back(e);
     }
     if (removed == 0) return true;
@@ -1671,7 +1674,7 @@ static void DrawFlag(HDC dc, int i, const RECT& r)
 static bool ButtonVisible(int i)
 {
     if (i == ACT_OPEN_MODS)    return g_cfg.showModFolderButton;
-    if (i == ACT_DISABLE_MODS) return g_cfg.showDisableModsButton && !g_cfg.requireMods.empty();
+    if (i == ACT_DISABLE_MODS) return g_cfg.showDisableModsButton;   // the click scans mod.info files itself
     return true;
 }
 
