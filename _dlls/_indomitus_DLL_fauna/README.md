@@ -1,4 +1,4 @@
-# GEM Fauna 0.7.0
+# GEM Fauna 0.7.1
 
 Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
 carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
@@ -239,6 +239,8 @@ caches its answer per def (64-entry direct-mapped table). Orders, election, sele
 run on player actions only. All debug logs are capped and off by default.
 
 ## History
+- 0.7.1 - fix: the stamina bar (vehicle panel and direct-control HUD) was gone in 0.7.0 - the stamina fields are found
+  through the call the vitality patch redirects, so they are now looked up before the patch.
 - 0.7.0 - vitality on any chassis: the vitality timer's foot-chassis reference cast no longer throws, so `{extender
   "vitality" {Health}}` works with human_carrier/wheel/track chassis (Carnifex). Simulation; every MP peer needs it.
 - 0.6.4 - crash log: C++ throws are logged with the thrown type and message (engine errors), up to 40, with a

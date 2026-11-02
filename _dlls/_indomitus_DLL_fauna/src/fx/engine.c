@@ -185,6 +185,7 @@ static int install_vitality_chassis(void)
 
 static int find_stamina_fields(void)
 {
+    if (g_stamMaxOff) return 1;                                       /* already found (main.c runs it before the vitality patch) */
     static const char lbl[] = "eChassisFoot::SetStaminaMovementModeLimit";
     uint8_t *s = find_bytes(g_rdata.p, g_rdata.n, (const uint8_t *)lbl, sizeof lbl - 1);
     uint8_t *lea = NULL;                                               /* movups xmm,[rip+label] (the log text is copied) */

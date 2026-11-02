@@ -47,7 +47,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define FX_VERSION "0.7.0"
+#define FX_VERSION "0.7.1"
 #define FX_NAME    "GEM Fauna"
 #define FX_INI     L"\\gem_fauna.ini"
 #define FX_LOG     L"\\gem_fauna.log"

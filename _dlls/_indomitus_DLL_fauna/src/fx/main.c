@@ -93,6 +93,10 @@ static void init(HMODULE self)
 
     g_okVit = find_vitality();
 
+    /* the stamina fields are found through the timer's direct SetStaminaMovementModeLimit call, which the vitality
+       patch below redirects: look them up first (used by the UI later) */
+    if (g_okVit) find_stamina_fields();
+
     /* simulation, any unit: a vitality extender on a non-foot chassis no longer kills the game */
     if (!ini_int("vitality_any_chassis", 1)) logf_("vitality on any chassis        off (ini)");
     else if (find_vitality_chassis() && install_vitality_chassis()) logf_("vitality on any chassis        ON ({extender \"vitality\"} works with wheel/track/human_carrier chassis)");
