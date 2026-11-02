@@ -1,0 +1,21 @@
+; /interface/action/jetpack.set  -  example custom action for GEM Teleport (launcher-only folder!)
+; Without the DLL the engine logs "Unknown instruction" for {teleport} and the action is broken, so keep this
+; file where only the Indomitus launcher loads it (40k_ folder / launcher-only mod).
+{action
+	{target ground}				; ground clicks only: a click on a house, wall, vehicle, tree... is refused (forbidden cursor)
+	{cursor "jump"}
+	{notifyselect}
+	{item "jetpack_ability"}
+	{item_in_box}
+	{button "jetpack"}
+	{Key "actions/jetpack"}
+	{apply_to_all}				; every selected soldier jumps to the same point
+	{instructions
+		{effect "jetpack_start"}	; optional: fires {on "jetpack_start"} on the soldier first (tags it, see teleport_events.inc)
+		{teleport
+			{max_radius 40}			; metres from the soldier (also: a click farther away shows the forbidden cursor)
+			{pre_use_delay 0.8}		; seconds: lock + {on "teleport_begin"} ... move + {on "teleport_jump"}
+			{post_use_delay 0.6}	; seconds: ... release + {on "teleport_end"}
+		}
+	}
+}

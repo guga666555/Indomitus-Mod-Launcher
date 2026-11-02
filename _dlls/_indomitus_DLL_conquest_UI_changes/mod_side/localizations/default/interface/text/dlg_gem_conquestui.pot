@@ -1,0 +1,18 @@
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Indomitus - GEM ConquestUI\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# Dynamic Campaign page: the button next to "Open research" that switches the reinforcement / airstrike /
+# emplacement portraits between "unlocked only" and "all". Its text says what a click will do.
+msgctxt "main_menu2/dynamic_campaign/gem_show_locked"
+msgid "SHOW LOCKED"
+msgstr ""
+
+msgctxt "main_menu2/dynamic_campaign/gem_hide_locked"
+msgid "HIDE LOCKED"
+msgstr ""

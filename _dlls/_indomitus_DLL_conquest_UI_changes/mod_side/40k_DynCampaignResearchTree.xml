@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Layout xmlns="http://www.digitalmindsoft.eu/xmllayout"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.digitalmindsoft.eu/xmllayout ../LayoutSchema.xsd"
+        version="1" skin="main_menu_dark_skin">
+	<Content>
+		<StackPanel placement="center">
+			<Insets left="28" right="28"/>
+			<Children>
+				<PercentPanel stretch="true" direction="vertical" gap="2" placement="center">
+					<Children>
+						<DockPanel percent="0.6" > <!-- Tree -->
+							<Insets left="1" top="1" right="1" bottom="1"/>
+							<Children>
+								<StackPanel id="background" placement="center">
+									<MinSize x="1000" y="200"/>
+									<Children>
+										<PictureDialog id="banner" resource="/interface/pages/main/dynamic_campaign/research_map" zoomMode="fit"/>
+										<DialogRef refid="video_dialog" id="video"/>
+										<FrameView percent="0.62" resource="/interface/skin/game/frame/window_misc2" placement="top" header="false"/>
+										<ScrollPane id="scrollPane">
+											<Insets top="16" bottom="16" left="16" right="16"/>
+											<Children>
+												<ScrollableContent trackWidth="false">
+													<Children>
+														<DialogRef refid="campaign_canvas_panel" id="linesContainer"/>
+														<DialogRef refid="campaign_canvas_panel" id="unitsContainer"/>
+													</Children>
+												</ScrollableContent>
+											</Children>
+										</ScrollPane>
+									</Children>
+								</StackPanel>
+								<StackPanel placement="bottom">
+									<Children>
+										<DockPanel>
+											<Children>
+												<FrameButton id="btn_clear" placement="left">
+													<MinSize y="32"/>
+													<Insets top="8" left="8" right="8"/>
+													<Sound value="gui/misc_gui_select" />
+													<Resource value="/interface/skin/game/button/window/small2" tileMode="single"/>
+												</FrameButton>
+												<FrameButton id="btn_research" placement="right">
+													<MinSize y="32"/>
+													<Insets top="8" left="8" right="8"/>
+													<Sound value="gui/misc_gui_select" />
+													<Resource value="/interface/skin/game/button/window/small2" tileMode="single"/>
+												</FrameButton>
+											</Children>
+										</DockPanel>
+										<FlowPanel halign="center" valign="center">
+											<Children>
+												<FlowPanel direction="horizontal" valign="center" placement="right" gap="2">
+													<Children>
+														<StaticText id="available_rp"/>
+														<PictureDialog resource="/interface/pages/main/resource_rp" zoomMode="fit" centerY="true"/>
+													</Children>
+												</FlowPanel>
+											</Children>	
+										</FlowPanel>
+									</Children>
+								</StackPanel>
+							</Children>
+						</DockPanel>  <!-- Tree -->
+						<DialogRef id="inspector" refid="gui_multiplayer_library" percent="0.4"/> <!-- re-enabled for GEM ConquestUI (unit preview) -->
+					</Children>
+				</PercentPanel>
+			</Children>
+		</StackPanel>
+	</Content>
+</Layout>

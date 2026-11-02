@@ -1,0 +1,30 @@
+{breed
+	{behaviour soldier}
+	{skin "deathkorp_commissar"}
+	{portrait dk_commissar}
+	{icon "officer"}
+	{icon_priority 9}
+	{tags "soldier" "gem_default_tx_00" "commissar_ID" "imperial_guard_ID" "gasmask_ID" "strong_ID"}
+	{nationality dk_commissar}
+	{perks
+		(include "ability.inc")
+		("smg_skill_rank_6")("tier7_defense")("binocular_vision")	
+	}
+	{veterancy
+		(include "ability.inc")
+		("veterancy_lvl_0")
+	}
+	{inventory
+		{item "boltpistol" filled}
+		{item "bolter_pistol ammo" 100}
+		{item "bolter_pistol inferno ammo" 10}
+		{item "bolter_pistol krak ammo" 10}
+		
+		{item "ig_chainsword" filled}
+		{item "bandage" 5.5 0.5}
+		{item "frag grenade" 2.5 0.5}
+		{item "krak grenade" 1.5 0.5}
+
+        {in_hands 0}
+	}
+}

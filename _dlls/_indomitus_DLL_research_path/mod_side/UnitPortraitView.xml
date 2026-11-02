@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Layout xmlns="http://www.digitalmindsoft.eu/xmllayout"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.digitalmindsoft.eu/xmllayout ../LayoutSchema.xsd"
+		version="1" skin="main_menu_dark_skin_small">
+	<Content>
+		<StackPanel>
+			<PreferredSize x="112" y="140"/>
+			<Children>
+				<StackPanel>
+					<Insets all="2"/>
+					<Children>						
+						<StackPanel id="portrait"/>
+						<PictureDialog id="is_incomplete" resource="/interface/scene/portrait_squad/incomplete" zoomMode="fit">
+							<Active value="false"/>
+							<Ables mouse="false"/>
+						</PictureDialog>
+						<PictureDialog id="is_invalid" resource="/interface/scene/portrait_squad/invalid2" zoomMode="fit">
+							<Active value="false"/>
+							<Ables mouse="false"/>
+						</PictureDialog>
+						<PictureDialog id="is_locked" resource="/interface/scene/portrait_squad/locked" zoomMode="fit">
+							<Active value="false"/>
+						</PictureDialog>
+						<PictureDialog id="is_locked_dlc" resource="/interface/scene/portrait_squad/locked_dlc" zoomMode="fit">
+							<Active value="false"/>
+						</PictureDialog>
+						<PictureDialog id="stage_number" zoomMode="fit">
+							<Active value="false"/>
+							<Ables mouse="false"/>
+						</PictureDialog>
+						<PictureDialog id="veterancy" zoomMode="fit">
+							<Active value="false"/>
+							<Ables mouse="false"/>
+						</PictureDialog>
+					</Children>
+				</StackPanel>
+				<PictureDialog id="frame" resource="/interface/scene/portrait_squad/frame" zoomMode="fit">
+					<Ables mouse="false"/>
+				</PictureDialog>
+				<!-- GEM ResearchPath: shown on research tree units on the hovered path, hidden otherwise.
+				     Texture: resource\interface\scene\portrait_squad\frame_glow.(tga/dds/png), drawn over the frame;
+				     move this element above "frame" to draw it under the frame instead. -->
+				<PictureDialog id="rp_glow" resource="/interface/scene/portrait_squad/frame_glow" zoomMode="fit">
+					<Active value="false"/>
+					<Ables mouse="false"/>
+				</PictureDialog>
+				<DockPanel>
+					<Insets all="5"/>
+					<Children>
+						<FlowPanel valign="center" halign="center" placement="top">
+							<Children>
+								<StaticText id="description">
+									<Active value="false"/>
+									<TextClip value="true" showHint="true"/>
+									<TextStyle value="x.e(shadow)f(techno_narrow)s(18)"/>
+								</StaticText>
+							</Children>
+						</FlowPanel>
+						<FlowPanel placement="bottom" direction="vertical" halign="right" gap="4">
+							<Children>
+								<FlowPanel direction="horizontal" halign="right" valign="bottom">
+									<Children>
+										<StaticText id="cp">
+											<Active value="false"/>
+											<Ables mouse="false"/>
+											<TextStyle value="x.e(shadow)f(techno_narrow)s(18)"/>
+										</StaticText>
+										<PictureDialog id="cp_icon" resource="/interface/pages/main/resource_cp" zoomMode="fit" centerY="true">
+											<Active value="false"/>
+											<Ables mouse="false"/>
+										</PictureDialog>
+									</Children>
+								</FlowPanel>
+								<FlowPanel direction="horizontal" halign="right">
+									<Children>
+										<StackPanel>
+											<Children>
+												<StaticText id="price">
+													<Active value="false"/>
+													<Ables mouse="false"/>
+													<TextStyle value="x.e(shadow)f(techno_narrow)s(18)"/>
+												</StaticText>
+												<StaticText id="count">
+													<Active value="false"/>
+													<Ables mouse="false"/>
+													<TextStyle value="x.e(shadow)f(techno_narrow)s(18)"/>
+												</StaticText>
+											</Children>
+										</StackPanel>
+										<PictureDialog id="price_icon" zoomMode="fit" centerY="true">
+											<Active value="false"/>
+											<Ables mouse="false"/>
+										</PictureDialog>
+									</Children>
+								</FlowPanel>
+							</Children>
+						</FlowPanel>
+					</Children>
+				</DockPanel>
+			</Children>
+		</StackPanel>
+	</Content>
+</Layout>

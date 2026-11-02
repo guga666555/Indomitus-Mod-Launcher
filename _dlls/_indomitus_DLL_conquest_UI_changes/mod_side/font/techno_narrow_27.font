@@ -1,0 +1,7 @@
+{font_atlas
+    {name "techno_narrow"}
+    {size 27}
+    {height 30}
+    {style 0}
+    {binary_data "techno_narrow_27.fnt"}
+}

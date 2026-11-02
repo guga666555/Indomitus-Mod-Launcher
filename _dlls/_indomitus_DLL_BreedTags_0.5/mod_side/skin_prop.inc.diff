@@ -1,0 +1,26 @@
+--- /mnt/user-data/uploads/Indomitus_DEV/resource/set/interaction_entity/40k_human/40k_skin/skin_prop.inc	2026-10-23 10:13:23.991224442 -0700
++++ skin_prop.inc	2026-10-23 14:50:00.762138990 -0700
+@@ -8,6 +8,7 @@
+ 	
+ 	(Include "skin_weapon.inc")
+ 	(Include "skin.inc")
++	(Include "skin/breeds_traits/breed_tags.inc")	; // breed {tags} -> skeleton / trait calls (needs GEM BreedTags dll)
+ 	
+ 	;//(Include "crew.inc")
+ 	;//(Include "crew_restrictions.inc")
+@@ -17,6 +18,7 @@
+ 		{Delay 0.01 {volumes enable contact}}
+ 		("Define_Skin_Visibility_Guard")		; // hidden skin bone = not skinned, whatever the tags say
+ 		("Define_Spawn_Event")
++		("Breed_Tags_Define_Spawn_Event")		; // breed {tags} path (see breed_tags.inc)
+ 		
+ 		{tags remove "spawned"} ; ///////////////////// ###########################
+ 		("Define_Spawn_Event_Reload_Skins")
+@@ -24,6 +26,7 @@
+ 		
+ 	}
+ 	{on "Link_weapon" sync
++		("Breed_Tags_Define_Link_Weapon_Event")	; // before the weapon-effector fallback so a breed skeleton tag wins
+ 		("SC_H_Skin_Weapon_Define_Link_Weapon")		
+ 		("SC_H_Request_Define_Link_Weapon")
+ 
