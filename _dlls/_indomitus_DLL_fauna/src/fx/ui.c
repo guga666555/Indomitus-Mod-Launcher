@@ -204,6 +204,7 @@ static int g_okUi;
 #define UI_NAME_MAX 15
 static char g_barName[64] = "bar_health", g_txtName[64] = "txt_health", g_pnlName[64] = "pnl_health", g_faunaIconDefault[48] = "soldier";
 static char g_stBarName[64] = "bar_stamina", g_stTxtName[64] = "txt_stamina", g_stPnlName[64] = "pnl_stamina";
+static char g_faunaHide[128] = "pnl_speed";                         /* vehicle panel widgets hidden for fauna (space separated, up to 4) */
 
 /* engine widget layout (GUI2): eDialog vtable slots, progress bar value and caption */
 #define DLG_VT_SHOW        5      /* re-reads flags bit1 (visible) */
@@ -326,6 +327,28 @@ static void panel_row(void *panel, const char *barName, const char *txtName, con
     }
 }
 
+/* widgets of the vehicle panel that make no sense for fauna (ini fauna_hide_in_vehicle_panel, default the speed row):
+   hidden while a fauna is shown, shown again for any other vehicle. The engine never toggles them itself (it only
+   fills them), so giving them back is safe. */
+#define HIDE_N 4
+static void panel_hide_for_fauna(void *panel, int fauna)
+{
+    static void *lastPanel; static uint8_t *w[HIDE_N]; static int hidden = -1, n;
+    if (panel != lastPanel || (fauna && hidden != 1)) {              /* new panel, or a fauna appears: (re)resolve */
+        FindChildFn find = (FindChildFn)(*(void ***)panel)[DLG_VT_FIND_CHILD];
+        char buf[sizeof g_faunaHide]; strcpy(buf, g_faunaHide); n = 0;
+        for (char *tok = strtok(buf, " ,;"); tok && n < HIDE_N; tok = strtok(NULL, " ,;")) {
+            if (strlen(tok) > UI_NAME_MAX) continue;
+            MsString nm; ms_set(&nm, tok); w[n] = (uint8_t *)find(panel, &nm);
+            if (w[n]) n++;
+        }
+        if (panel != lastPanel) hidden = -1;
+        lastPanel = panel;
+    }
+    if (fauna) { for (int i = 0; i < n; i++) dlg_show(w[i], 0); hidden = 1; }
+    else if (hidden == 1) { for (int i = 0; i < n; i++) dlg_show(w[i], 1); hidden = 0; }
+}
+
 /* vehicle panel: bar_health / txt_health are the mod's own widgets. Fauna -> shown and fed from the vitality;
    any other vehicle (or no entity) -> hidden, so normal vehicles look exactly as before. */
 static void hook_panel_vehicle_update(void *panel)
@@ -351,6 +374,7 @@ static void hook_panel_vehicle_update(void *panel)
                   e, e[ENT_FLAGS], def, okp ? "" : "[unreadable] ", props, (unsigned long long)TAG_ID(g_tagFaunaBuf), g_faunaProp);
         }
     }
+    if (g_faunaHide[0]) panel_hide_for_fauna(panel, e && is_fauna(e));
     static PanelRow rowHp, rowSt;
     panel_row(panel, g_barName, g_txtName, g_pnlName, show, cur, max, &rowHp, 1);
     /* stamina row (optional widgets): fauna with a vitality {Stamina} block (max > 0) */

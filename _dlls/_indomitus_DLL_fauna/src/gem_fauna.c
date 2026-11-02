@@ -22,11 +22,13 @@
  *   fx/engine.c      Tag ctor, condition tables, def props, vitality (health) getters
  *   fx/patch.c       thread-safe code patching: inline hooks, call redirection, vtable hooks (ScriptExt 0.8.1 rules)
  *   fx/fauna.c       "is this unit fauna", vitality access
+ *   fx/sprint.c      fauna sprint (foot chassis mode commit)
  *   fx/squads.c      squad leaders (ElectLeader entry hook), box-select (whole squad / loose units), pace
  *   fx/follow.c      fauna followers keep their formation slot (vehicle follow handler re-targeted)
  *   fx/bandage.c     double-clicking a bandage in a fauna inventory heals it (UseItem operation wrapped)
  *   fx/ui.c          vehicle panel health row + squad strip, ui_debug selection trace
- *   fx/sqview.c      over-head squad icon from a def prop (extra squad_view files loaded with the engine's 7)
+ *   fx/dcview.c      direct-control HUD rows (health / stamina) for fauna
+ *   fx/headicon.c    over-head marker icon from a def prop "icon_<name>"
  *   fx/crashlog.c    crash / process-exit logging
  *   fx/main.c        init sequence, DllMain
  *   fx/test_main.c   FX_TEST only: offline finder check against exe files (tests/run_offline_check.sh)
@@ -47,7 +49,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define FX_VERSION "0.7.1"
+#define FX_VERSION "0.9.0"
 #define FX_NAME    "GEM Fauna"
 #define FX_INI     L"\\gem_fauna.ini"
 #define FX_LOG     L"\\gem_fauna.log"
@@ -58,11 +60,12 @@
 #include "fx/fauna.c"
 #include "fx/squads.c"
 #include "fx/sprint.c"
+#include "fx/contact.c"
 #include "fx/follow.c"
 #include "fx/bandage.c"
 #include "fx/ui.c"
 #include "fx/dcview.c"
-#include "fx/sqview.c"
+#include "fx/headicon.c"
 #include "fx/crashlog.c"
 #include "fx/main.c"
 #include "fx/test_main.c"

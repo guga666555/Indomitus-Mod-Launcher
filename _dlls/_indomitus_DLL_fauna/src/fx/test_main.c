@@ -32,6 +32,7 @@ int main(int argc, char **argv)
     printf("--- squad finders (required: simulation, every exe)\n");
     ok &= find_squad_select(); ok &= find_squad_elect(); ok &= find_squad_pace(); ok &= find_follow();
     ok &= find_fauna_sprint();
+    ok &= find_contact();
     printf("SetSelected: %s\n", g_setSelected ? "found" : "not found (optional)");
     printf("box create finder: %s\n", find_box_create() ? "found" : "NOT found");
     printf("--- bandage finders (simulation)\n");
@@ -39,7 +40,7 @@ int main(int argc, char **argv)
     printf("--- ui finders (game + editor only)\n");
     int ui = find_ui();
     printf("ui finders: %s\n", ui ? "found" : "not found (expected for the dedicated server)");
-    if (ui) printf("head icon finders: %s\n", find_sqview() ? "found" : "NOT found");
+    if (ui) printf("head icon finders: %s\n", find_head_icon() ? "found" : "NOT found");
     if (ui) printf("direct-control HUD finders: %s\n", find_dcview() ? "found" : "NOT found");
     if (ui) {
         printf("CreateItem prologue (relocated into the stub): "); for (int i = 0; i < CI_PROLOGUE_LEN; i++) printf("%02X ", g_createItemFn[i]); printf("\n");

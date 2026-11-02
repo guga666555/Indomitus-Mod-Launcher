@@ -32,6 +32,7 @@ static void init(HMODULE self)
     ini_str("stamina_bar_name", "bar_stamina", g_stBarName, sizeof g_stBarName);
     ini_str("stamina_text_name", "txt_stamina", g_stTxtName, sizeof g_stTxtName);
     ini_str("stamina_panel_name", "pnl_stamina", g_stPnlName, sizeof g_stPnlName);
+    ini_str("fauna_hide_in_vehicle_panel", "pnl_speed", g_faunaHide, sizeof g_faunaHide);
     ini_str("fauna_default_icon", "soldier", g_faunaIconDefault, sizeof g_faunaIconDefault);
     g_wantSqSel = ini_int("fauna_squad_select", 1);
     g_wantElect = ini_int("fauna_squad_elect", 1);
@@ -41,10 +42,12 @@ static void init(HMODULE self)
     if (g_formationRadiusCm < 50) g_formationRadiusCm = 50; if (g_formationRadiusCm > 1500) g_formationRadiusCm = 1500;
     g_uiDebug   = ini_int("ui_debug", 0);
     g_wantSprint = ini_int("fauna_double_click_sprint", 1);
-    g_wantSqvIcon = ini_int("fauna_head_icon", 1);
+    g_wantHeadIcon = ini_int("fauna_head_icon", 1);
     g_wantFaunaSprint = ini_int("fauna_sprint", 1);
     g_sprintDebug = ini_int("fauna_sprint_debug", 0);
     g_wantDcView = ini_int("fauna_dc_hud", 1);
+    g_wantContact = ini_int("fauna_dc_contact", 1);
+    g_contactObjects = ini_int("fauna_dc_crush_objects", 1);
     ini_str("dc_health_icon", g_dcHpIcon, g_dcHpIcon, sizeof g_dcHpIcon);
     ini_str("dc_stamina_icon", g_dcStIcon, g_dcStIcon, sizeof g_dcStIcon);
     ini_str("dc_vehicle_icon_1", g_dcFuelIcon, g_dcFuelIcon, sizeof g_dcFuelIcon);
@@ -91,6 +94,15 @@ static void init(HMODULE self)
                    g_okPace ? ", double-click run" : "; double-click run OFF: move order hook missing", g_sprintDebug ? " - sprint debug log on" : "");
     }
 
+    /* simulation: a direct-controlled foot fauna walks into soldiers / objects (contact: ram, crush) instead of being
+       pushed back like a soldier */
+    if (!g_wantContact) logf_("fauna direct-control contact   off (ini)");
+    else {
+        g_okContact = ((g_vtFoot && g_footManualOff) || find_fauna_sprint()) && find_contact() && install_contact();
+        logf_("fauna direct-control contact   %s", !g_okContact ? "OFF (engine code not recognised)"
+              : g_contactObjects ? "ON (walks into soldiers and objects: ram / crush)" : "ON (walks into soldiers: ram; objects push back - ini)");
+    }
+
     g_okVit = find_vitality();
 
     /* the stamina fields are found through the timer's direct SetStaminaMovementModeLimit call, which the vitality
@@ -122,9 +134,9 @@ static void init(HMODULE self)
             g_okDcView = find_dcview() && install_dcview();
             logf_("fauna direct-control HUD        %s", g_okDcView ? "ON (health + stamina instead of fuel + speed)" : "OFF (engine code not recognised)");
         } else if (g_okUi) logf_("fauna direct-control HUD        off (ini)");
-        if (g_okUi && g_wantSqvIcon) {
-            g_okSqvIcon = find_sqview() && install_sqview();
-            logf_("fauna over-head icon prop        %s", g_okSqvIcon ? "ON (def prop squad_view_<file> / squad_view_leader_<file>)" : "OFF (engine code not recognised)");
+        if (g_okUi && g_wantHeadIcon) {
+            g_okHeadIcon = g_okIcons && find_head_icon() && install_head_icon();          /* needs the engine string assign (icon finders) */
+            logf_("fauna over-head icon prop        %s", g_okHeadIcon ? "ON (def prop \"icon_<name>\" replaces icon_vehicle)" : "OFF (engine code not recognised)");
         } else if (g_okUi) logf_("fauna over-head icon prop        off (ini)");
         if (g_okUi && g_wantSqSel) {
             g_okSqSel = (g_sqSelSite || find_squad_select()) && install_squad_select();

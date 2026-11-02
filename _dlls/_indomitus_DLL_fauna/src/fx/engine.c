@@ -142,7 +142,7 @@ static int find_vitality(void)
    ticks (no {Stamina} block needed: the empty-limits case still gets there). Patch: the cast's throw flag
    (mov dword [rsp+0x20],1 -> 0, the __RTDynamicCast isReference argument) and the SetStaminaMovementModeLimit call
    redirected to a wrapper that skips a NULL chassis. The client-side path calls a base-class virtual and is fine. */
-static uint8_t *g_vitCastFlag, *g_vitSetLimitSite; static void *g_vitSetLimitFn;
+static uint8_t *g_vitCastFlag, *g_vitSetLimitSite; static void *g_vitSetLimitFn; static uint32_t g_footLimitOff;
 static int find_vitality_chassis(void)
 {
     static const char lbl[] = "eChassisFoot::SetStaminaMovementModeLimit";
@@ -164,16 +164,25 @@ static int find_vitality_chassis(void)
         n++; g_vitCastFlag = flag + 4; g_vitSetLimitSite = p; g_vitSetLimitFn = setLimit;
     }
     if (n != 1) { logf_("vitality chassis: timer site not recognised (%d matches)", n); return 0; }
-    logf_("vitality chassis: vitality timer cast flag @ exe+0x%llX, SetStaminaMovementModeLimit call @ exe+0x%llX", EXE_OFF(g_vitCastFlag), EXE_OFF(g_vitSetLimitSite));
+    for (uint8_t *q = setLimit; q < setLimit + 0x60 && !g_footLimitOff; q++)           /* cmp [rbx+LIMIT],edi */
+        if (q[0] == 0x39 && q[1] == 0xBB && q[4] == 0 && q[5] == 0 && q[6] == 0x0F && q[7] == 0x84) g_footLimitOff = *(uint32_t *)(q + 2);
+    if (!g_footLimitOff) logf_("vitality chassis: stamina limit field not recognised - an exhausted fauna slows only at its next move");
+    logf_("vitality chassis: vitality timer cast flag @ exe+0x%llX, SetStaminaMovementModeLimit call @ exe+0x%llX (limit +0x%X)", EXE_OFF(g_vitCastFlag), EXE_OFF(g_vitSetLimitSite), g_footLimitOff);
     return 1;
 }
 #ifndef FX_TEST
 static int patch_code(uint8_t *dst, const void *src, size_t len, const char *what);          /* patch.c (included later) */
 static int redirect_call(uint8_t *e8, void *fn, void **orig, const char *what);
 typedef void (*SetLimitFn)(void *chassis, int limit, uint8_t force);
+static void fauna_limit_changed(uint8_t *chassis);                   /* sprint.c */
 static void fx_set_stamina_limit(void *chassis, int limit, uint8_t force)
 {
-    if (chassis) ((SetLimitFn)g_vitSetLimitFn)(chassis, limit, force);   /* not a foot chassis: nothing to limit */
+    if (!chassis) return;                                             /* not a foot chassis: nothing to limit */
+    int before = g_footLimitOff ? *(int32_t *)((uint8_t *)chassis + g_footLimitOff) : limit;
+    ((SetLimitFn)g_vitSetLimitFn)(chassis, limit, force);
+    /* a soldier's FSM applies the new limit to the running movement; a fauna's never does (see sprint.c), so an
+       exhausted fauna kept sprinting until its next move: apply it now */
+    if (g_footLimitOff && *(int32_t *)((uint8_t *)chassis + g_footLimitOff) != before) fauna_limit_changed(chassis);
 }
 static int install_vitality_chassis(void)
 {

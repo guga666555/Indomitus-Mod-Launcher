@@ -179,6 +179,13 @@ static void foot_commit(uint8_t *ch, uint8_t *e)
               *(int32_t *)(ch + g_footModeOff), csp, sp, *(float *)(ch + g_footSpeedOff),
               *(int32_t *)(ch + g_footTypeReqOff), *(int32_t *)(ch + g_footTypeCurOff)); }
 }
+/* engine.c: the vitality timer changed a foot chassis' stamina limit (exhausted / recovered) */
+static void fauna_limit_changed(uint8_t *ch)
+{
+    if (!g_okFaunaSprint) return;
+    uint8_t *e = foot_fauna(ch);
+    if (e) foot_commit(ch, e);
+}
 static void fx_foot_set_mode(void *chv, int mode, uint8_t force)
 {
     uint8_t *ch = chv, *e = foot_fauna(ch);

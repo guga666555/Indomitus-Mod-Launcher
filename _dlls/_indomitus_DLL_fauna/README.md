@@ -1,4 +1,4 @@
-# GEM Fauna 0.7.1
+# GEM Fauna 0.9.0
 
 Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
 carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
@@ -23,8 +23,9 @@ fails only turns its feature off (see `gem_fauna.log`).
 | double-click run makes a fauna sprint (the "Fast" entry of its chassis), also out of a squad and in walk mode | `fauna_double_click_sprint` | simulation |
 | the sprint request sticks on the fauna's foot chassis: double-click run, and **Shift in direct control** (stamina still limits it) | `fauna_sprint`, `fauna_sprint_debug` | simulation |
 | direct-control HUD: health and stamina rows (human view icons) instead of fuel and speed for fauna | `fauna_dc_hud`, `dc_health_icon`, `dc_stamina_icon`, `dc_vehicle_icon_1/2` | local (game, editor) |
-| over-head squad icon picked by a def prop: `{props "squad_view_<file>"}` (role icon), optional `{props "squad_view_leader_<file>"}` (leader icon); files in `interface/scene/squad_view/` | `fauna_head_icon` | local (game, editor) |
+| over-head marker (the shield) picked by a def prop: `{props "icon_<name>"}` -> `interface/scene/squad/icon_<name>_00/_01/_02` (no faction part) | `fauna_head_icon` | local (game, editor) |
 | stamina bar in the vehicle panel (`bar_stamina` / `txt_stamina` / `pnl_stamina`) for fauna with a vitality `{Stamina}` block | `fauna_stamina_bar`, `stamina_bar_name`, `stamina_text_name`, `stamina_panel_name` | local |
+| direct control (foot chassis): a fauna walks into soldiers (ram / run over) and objects (crush) instead of stopping at their edge like a soldier | `fauna_dc_contact`, `fauna_dc_crush_objects` | **simulation** |
 | `{extender "vitality"}` (Health) on a wheel/track/human_carrier chassis no longer kills the game (any unit, not only fauna) | `vitality_any_chassis` | **simulation** |
 | diagnostics | `crash_log`, `ui_debug`, `fauna_sprint_debug` | - |
 
@@ -61,7 +62,7 @@ src/fx/follow.c     find_follow / install_follow: the vehicle follow handler's a
 src/fx/bandage.c    find_bandage / install_bandage: UseItem operation step (vtable slot 9) for fauna + bandage ->
                     RemoveMany one + HealPercent; inventory window click logged for fauna (diagnostics)
 src/fx/crashlog.c   vectored exception log, ExitProcess/TerminateProcess IAT trace
-src/fx/sqview.c     find_sqview / install_sqview: GameControl::eSquadView builder (extra squad_view icons) and icon classifier calls
+src/fx/headicon.c   find_head_icon / install_head_icon: the over-head marker name builder (entry hook), icon_<name> prop
 src/fx/main.c       init order: tag ctor + prop cond -> squads (sim: elect, formation) -> pace + sprint -> vitality -> bandages -> UI
                     (+ stamina fields, head icon) -> box select (+ box create)
 src/fx/test_main.c  FX_TEST main
@@ -202,20 +203,33 @@ GEM Fauna runs after it: for a fauna, row 1 gets the health icon (`/interface/sc
 row 2 the stamina icon and "cur / max" (row hidden when the def has no Stamina block). Any other vehicle gets the fuel and
 speed icons back. No layout change is needed (the view has no XML).
 
-## Over-head icon - how it works
+## Over-head icon (0.8.0) - how it works
 
-`GameControl::eSquadView` builds one sprite per Tag of a static list (normal, medic, mg, at, sniper, engineer,
-squad_leader) from `/interface/scene/squad_view/<name>` into a map, and per unit a classifier picks the Tag from the unit's
-role flags (leader: squad_leader). GEM Fauna appends every other file of `interface/scene/squad_view/` (file repository)
-to that list before the first view is built, and wraps the two classifier calls: for a fauna with
-`squad_view_<file>`, the six role entries point at that sprite while the engine classifies, then are restored
-(`squad_view_leader_<file>` does the same for squad_leader).
+The marker over a unit's head is an image named by the engine's marker-name builder (found through its
+`spectator_enemy` / `icon_vehicle` strings; called by the marker views):
+`/interface/scene/squad/` + BASE + `(` + faction tag + `)`. For a non-human, BASE is icon_tank / icon_cannon /
+icon_airborne / icon_helicopter from def props, else `icon_vehicle` for any vehicle-class unit (so every fauna), else
+icon_stub; the image set adds the `_00/_01/_02` states (normal / selected / highlighted). GEM Fauna hooks the builder's
+entry: for a fauna whose def has a prop starting with `icon_`, the whole name becomes that prop (no faction part -
+fauna have no nationality). Example: `{props "icon_carnifex"}` -> `interface/scene/squad/icon_carnifex_00.tga`, `_01`,
+`_02` (normal / selected / highlighted), one set for every player. Spectator icons and every other unit are
+untouched. Replaces the 0.6.0 `squad_view_<file>` prop, which targeted the role badges (`interface/scene/squad_view/`),
+not this marker; `src/fx/sqview.c` is no longer built and can be deleted.
 
-## Not done: crushing obstacles in direct control
+## Direct-control contact (0.9.0) - how it works
 
-Fauna use `{Chassis "foot"}`. Under AI movement, crushing comes from the vehicle state machine's "crush" state on the
-path; in direct control a tank crushes through its track chassis physics, which a foot chassis does not have. Doing it
-for fauna means driving the obstacle-crush code by hand and needs a runtime trace first (next step: a diagnostic build).
+Under AI a foot-chassis fauna follows its path and walks into whatever stands on it; the physics contact between the two
+entities then rams / crushes, as for any vehicle-class unit. In direct control the foot chassis moves through
+`eChassisFoot::ManualSimulation`, which first tests the target point against the unit's own pather class (terrain and
+static obstacles - the same grid the AI path uses) and then runs a soldier's collision step (pather class `human_tpc`):
+it queries the scene around the target (mask `0x2013402`) and pushes the target back out of every volume the unit would
+overlap. So a controlled fauna stopped at the edge of every soldier, fence or crate and never touched them.
+GEM Fauna wraps that step (found by the `human_tpc` literal and the query mask; 2 callers, both foot chassis). While it
+runs for a fauna in direct control, its volume test (the call after `lea r9,[vol+0x58]`) answers "no overlap" for
+volumes owned by a soldier, and by any entity that is not an actor (`fauna_dc_crush_objects`, default on). The fauna
+then walks into them and the engine's own contact handles the rest. Vehicles and other fauna still push it back;
+buildings and terrain are still blocked by the pather test. If a fauna walks through something it should not, set
+`fauna_dc_crush_objects=0` (soldiers only) and send the log.
 
 ## Vitality on any chassis (0.7.0) - how it works
 
@@ -239,6 +253,13 @@ caches its answer per def (64-entry direct-mapped table). Orders, election, sele
 run on player actions only. All debug logs are capped and off by default.
 
 ## History
+- 0.9.0 - direct control: foot-chassis fauna walk into soldiers and objects (ram / crush) instead of being pushed back
+  by the soldier collision step (`fauna_dc_contact`, `fauna_dc_crush_objects`).
+- 0.8.0 - over-head marker from a def prop `icon_<name>` (replaces icon_vehicle(faction) for fauna, no faction part);
+  the 0.6.0 `squad_view_` prop (wrong icon) is removed.
+- 0.7.2 - an exhausted fauna drops out of sprint at once (the stamina limit change is committed for fauna, whose FSM
+  never applies it; before, it sprinted on until its next move); the speed row of the vehicle panel is hidden for fauna
+  (`fauna_hide_in_vehicle_panel`, default `pnl_speed`).
 - 0.7.1 - fix: the stamina bar (vehicle panel and direct-control HUD) was gone in 0.7.0 - the stamina fields are found
   through the call the vitality patch redirects, so they are now looked up before the patch.
 - 0.7.0 - vitality on any chassis: the vitality timer's foot-chassis reference cast no longer throws, so `{extender
