@@ -313,6 +313,7 @@ static int find_bandage(void)
 }
 
 #ifndef FX_TEST
+static void healing_start(uint8_t *e);                                  /* healing events, below */
 /* host: tell the clients (engine commands; see the header) */
 static void send_bandage_result(uint8_t *user, void *def, int removed, float health)
 {
@@ -342,34 +343,37 @@ static void fx_medkit_exec(void *cmd)
         if (!vit) return;
         float want = *(float *)((uint8_t *)cmd + MEDKIT_HP), cur = g_getHealth(vit), max = g_getMaxHealth(vit);
         if (max > 0.f && want > 0.f && (want - cur > 1e-3f || cur - want > 1e-3f)) g_healPercent(t, (want - cur) / (max / 100.f));
+        if (want - cur > 1e-3f) healing_start(t);
         static int n; if (n < 20) { n++; logf_("bandage net: fauna %p health set by the host: %.0f -> %.0f of %.0f", t, cur, g_getHealth(vit), max); }
         return;
     }
     g_medkitExecOrig(cmd);
 }
 
-/* one bandage out of the op's item view, then the heal (and on the host, the result to the clients) */
-static void fauna_use_bandage(uint8_t *user, void *view, void *def, int host)
+/* one bandage out of the item view, then the heal (and on the host, the result to the clients); 1 = used */
+static int fauna_use_bandage(uint8_t *user, void *view, void *def, int host)
 {
     static int nlog;
     void *vit = entity_vitality(user);
-    if (!vit) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p has no vitality - bandage not used", user); } return; }
+    if (!vit) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p has no vitality - bandage not used", user); } return 0; }
     float cur = g_getHealth(vit), max = g_getMaxHealth(vit);
-    if (!(max > 0.f) || !(cur > 0.f)) return;
-    if (cur >= max) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p at full health (%.0f) - bandage kept", user, cur); } return; }
-    if (g_viewIsReserved(view)) { if (nlog < 20) { nlog++; logf_("bandage: the bandage is reserved - not used"); } return; }
+    if (!(max > 0.f) || !(cur > 0.f)) return 0;
+    if (cur >= max) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p at full health (%.0f) - bandage kept", user, cur); } return 0; }
+    if (g_viewIsReserved(view)) { if (nlog < 20) { nlog++; logf_("bandage: the bandage is reserved - not used"); } return 0; }
     uint8_t *cell = g_viewCurrent(view);
-    if (cell && g_cellHolderOff && *(void **)(cell + g_cellHolderOff)) { if (nlog < 20) { nlog++; logf_("bandage: the bandage is in a holder - not used"); } return; }
+    if (cell && g_cellHolderOff && *(void **)(cell + g_cellHolderOff)) { if (nlog < 20) { nlog++; logf_("bandage: the bandage is in a holder - not used"); } return 0; }
     struct { void *def; int32_t count; int32_t pad; } req = { def, 1, 0 };
     uint8_t *rec = (uint8_t *)g_removeMany(view, &req);
     int removed = rec ? *(int32_t *)(rec + g_cellCountOff) : 0;
     if (rec) (*(void (**)(void *, int))*(void **)rec)(rec, 1);       /* the record's deleting destructor, as the console does */
     g_viewReset(view);
-    if (removed < 1) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p - the engine removed no bandage, no heal", user); } return; }
+    if (removed < 1) { if (nlog < 20) { nlog++; logf_("bandage: fauna %p - the engine removed no bandage, no heal", user); } return 0; }
     float applied = g_healPercent(user, (float)g_bandagePct);
+    if (applied > 0.f) healing_start(user);
     if (host) send_bandage_result(user, def, removed, g_getHealth(vit));
     if (nlog < 20) { nlog++; logf_("bandage: fauna %p used a bandage: health %.0f -> %.0f of %.0f (+%.1f%% of max)%s", user, cur, g_getHealth(vit), max, applied,
                                    host ? " - sent to the clients" : ""); }
+    return 1;
 }
 
 static void fx_useitem_tick(void *op, void *a, void *b, void *c)
@@ -425,5 +429,189 @@ static int install_bandage(void)
         g_okBandageNet = 0; logf_("bandage net: eUseMedkitCommand vtable not writable - multiplayer OFF");
     }
     return 1;
+}
+#endif /* FX_TEST */
+
+/* ---- healing events (0.10.0) ----
+ * The engine tells a soldier's interaction script that he is being healed with the events "start_healing" /
+ * "stop_healing" (the healing actions call them; scripts use them for the healing marker:
+ *     {on "start_healing" {view start ally neutral "marker_healing"}}   {on "stop_healing" {view pause "marker_healing"}}).
+ * A fauna's bandage heals at once, so GEM Fauna calls the start event on the fauna when a bandage heals it - on every
+ * peer: where it is used (single player, host) and on the clients when the host's heal arrives - and the stop event
+ * fauna_healing_event_seconds later. The call is the engine's own sequence from the soldier's healing action:
+ * Tag(name) ; ctx = InteractionCtx(buf, entity) ; Call(ctx, &tag) ; ~ctx ; ~Tag. */
+typedef void *(*IxCtxFn)(void *buf, void *entity);
+typedef void  (*IxCallFn)(void *ctx, void *tag);
+typedef void  (*IxDtorFn)(void *p);
+static IxCtxFn g_ixCtx; static IxCallFn g_ixCall; static IxDtorFn g_ixCtxDtor, g_ixTagDtor;
+static int g_healEventSecs = 3;
+static char g_healEventStart[48] = "start_healing", g_healEventStop[48] = "stop_healing";
+
+static int find_healing_event(void)
+{
+    uint8_t *str = find_cstr("start_healing");
+    for (int k = 0; str && g_tagCtorCStr && k < 6 && !g_ixCall; k++) {
+        uint8_t *lea = find_lea_to(str, k), *p, *c[5];
+        if (!lea) break;
+        p = lea + 7;
+        int i = 0;
+        for (; i < 5; i++) { uint8_t *site; c[i] = next_fn_call(p, 0x30, &site); if (!c[i]) break; p = site + 5; }
+        if (i < 5 || c[0] != (uint8_t *)g_tagCtorCStr) continue;
+        g_ixCtx = (IxCtxFn)c[1]; g_ixCall = (IxCallFn)c[2]; g_ixCtxDtor = (IxDtorFn)c[3]; g_ixTagDtor = (IxDtorFn)c[4];
+    }
+    if (!g_ixCall) { logf_("healing events: the engine's \"start_healing\" call not recognised"); return 0; }
+    logf_("healing events: interaction call exe+0x%llX (ctx exe+0x%llX / ~ctx exe+0x%llX, ~Tag exe+0x%llX)",
+          EXE_OFF(g_ixCall), EXE_OFF(g_ixCtx), EXE_OFF(g_ixCtxDtor), EXE_OFF(g_ixTagDtor));
+    return 1;
+}
+
+#ifndef FX_TEST
+static void ix_call(uint8_t *e, const char *name)
+{
+    if (!g_ixCall || !e || !name[0]) return;
+    __attribute__((aligned(16))) uint8_t tag[0x100], ctx[0x400];
+    memset(tag, 0, sizeof tag); memset(ctx, 0, sizeof ctx);
+    g_tagCtorCStr(tag, name);
+    void *c = g_ixCtx(ctx, e);
+    g_ixCall(c ? c : ctx, tag);
+    g_ixCtxDtor(ctx);
+    g_ixTagDtor(tag);
+}
+#define HEAL_SLOTS 32
+static struct { uint8_t *e; uint64_t stop; } g_healOn[HEAL_SLOTS];
+static int g_healActive;                                                 /* used slots */
+static void healing_start(uint8_t *e)
+{
+    if (!g_ixCall || g_healEventSecs <= 0) return;
+    uint64_t stop = GetTickCount64() + (uint64_t)g_healEventSecs * 1000;
+    int freeSlot = -1;
+    for (int i = 0; i < HEAL_SLOTS; i++) {
+        if (g_healOn[i].e == e) { g_healOn[i].stop = stop; return; }  /* already showing: keep it on longer */
+        if (!g_healOn[i].e && freeSlot < 0) freeSlot = i;
+    }
+    if (freeSlot < 0) return;
+    g_healOn[freeSlot].e = e; g_healOn[freeSlot].stop = stop; g_healActive++;
+    ix_call(e, g_healEventStart);
+}
+/* from the vitality timer wrapper, for the unit whose timer just ran (so it exists): its stop event when due. A slot
+   whose unit stopped ticking (removed from the scene) is dropped 30 s after its stop time without touching it. */
+static void healing_tick(uint8_t *e)
+{
+    uint64_t now = GetTickCount64();
+    for (int i = 0; i < HEAL_SLOTS; i++) {
+        if (!g_healOn[i].e || now < g_healOn[i].stop) continue;
+        if (g_healOn[i].e == e) { g_healOn[i].e = NULL; g_healActive--; ix_call(e, g_healEventStop); }
+        else if (now > g_healOn[i].stop + 30000) { g_healOn[i].e = NULL; g_healActive--; }
+    }
+}
+#endif /* FX_TEST */
+
+/* ---- automatic use (0.10.0) ----
+ * The vitality extender's timer (host side: it returns at once on a client; the same function GEM Fauna patches for
+ * vitality on any chassis, owner entity at vit+OWNER) is wrapped at its single call site. After the engine's tick, an
+ * AI-controlled fauna (not in direct control) whose health is below fauna_auto_bandage_below percent of max looks for a
+ * bandage in its inventory and uses one exactly like a double-click does (fauna_use_bandage: same heal, same multiplayer
+ * commands), at most once per fauna_auto_bandage_cooldown seconds.
+ * The inventory walk is the one of eInventoryRemoveCommand's execute: box = GetBox(entity) ; view(box) ;
+ * Find(view, filter Tags, 0, predicate) ; GetDef ; RemoveMany ; ~view. An empty filter and an empty predicate match
+ * every item; each one is tested for the "bandage" class tag like the UseItem step does. */
+typedef void   *(*GetBoxFn)(void *entity);
+typedef void   *(*ViewCtorFn)(void *view, void *box);
+typedef uint8_t (*ViewFindFn)(void *view, const void *filter, int mode, void *pred);
+typedef void    (*ViewDtorFn)(void *view);
+typedef uint64_t (*VitTimerFn)(void *vit, void *a, void *b, void *c);
+static GetBoxFn g_invGetBox; static ViewCtorFn g_viewCtor; static ViewFindFn g_viewFind; static ViewDtorFn g_viewDtor;
+static uint8_t *g_vitTimer, *g_vitTimerSites[3]; static int g_vitTimerSiteN; static VitTimerFn g_vitTimerOrig;
+static uint32_t g_vitOwnerOff;
+static int g_okAutoBandage, g_wantAutoBandage = 1, g_autoBelowPct = 50, g_autoCooldownS = 10;
+
+static int find_bandage_auto(void)
+{
+    /* the inventory walk: in eInventoryRemoveCommand's execute, the calls around GetDef */
+    if (!g_vtRemoveCmd) g_vtRemoveCmd = find_vtable_rtti(".?AUeInventoryRemoveCommand@@");
+    uint8_t *ex = g_vtRemoveCmd ? (uint8_t *)g_vtRemoveCmd[4] : NULL;
+    uint8_t *t[16]; int n = 0, j = -1;
+    for (uint8_t *p = ex; ex && in_text(ex) && p < ex + 0xC0 && n < 16; p++) { uint8_t *c = call_target_fn(p); if (c) { if (c == (uint8_t *)g_viewGetDef && j < 0) j = n; t[n++] = c; p += 4; } }
+    if (j < 3 || j + 2 >= n || t[j + 1] != (uint8_t *)g_removeMany) { logf_("auto bandage: inventory walk not recognised (eInventoryRemoveCommand execute)"); return 0; }
+    g_invGetBox = (GetBoxFn)t[j - 3]; g_viewCtor = (ViewCtorFn)t[j - 2]; g_viewFind = (ViewFindFn)t[j - 1]; g_viewDtor = (ViewDtorFn)t[j + 2];
+    /* the vitality timer and its owner: the function of the SetStaminaMovementModeLimit call site; mov rdi,rcx ; call IsClient ;
+       test al,al ; jne ; ... first mov r64,[rdi+disp8] */
+    if (!g_vitSetLimitSite && !find_vitality_chassis()) return 0;
+    uint32_t f = func_of(g_vitSetLimitSite);
+    g_vitTimer = f ? g_base + f : NULL;
+    uint8_t *mv = NULL;
+    for (uint8_t *p = g_vitTimer; p && p < g_vitTimer + 0x40 && !mv; p++) if (p[0] == 0x48 && p[1] == 0x8B && p[2] == 0xF9) mv = p;
+    for (uint8_t *p = mv ? mv + 3 : NULL; p && p < mv + 0x60 && !g_vitOwnerOff; p++)
+        if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8B && (p[2] & 0xC7) == 0x47 && p[3] >= 0x08 && p[3] < 0x80) g_vitOwnerOff = p[3];
+    int n2 = calls_to(g_vitTimer, g_vitTimerSites, 3);
+    g_vitTimerSiteN = n2 > 3 ? 0 : n2;
+    if (!mv || !g_vitOwnerOff || !g_vitTimerSiteN) { logf_("auto bandage: vitality timer not recognised (owner +0x%X, %d calls)", g_vitOwnerOff, g_vitTimerSiteN); return 0; }
+    logf_("auto bandage: GetBox exe+0x%llX, view exe+0x%llX / Find exe+0x%llX / ~view exe+0x%llX; vitality timer exe+0x%llX (%d calls), owner vit+0x%X",
+          EXE_OFF(g_invGetBox), EXE_OFF(g_viewCtor), EXE_OFF(g_viewFind), EXE_OFF(g_viewDtor), EXE_OFF(g_vitTimer), g_vitTimerSiteN, g_vitOwnerOff);
+    return 1;
+}
+
+#ifndef FX_TEST
+/* per-fauna time of the next allowed try; the slot of a fauna that is gone is reused once its time has passed */
+#define AUTO_SLOTS 64
+static struct { const uint8_t *e; uint64_t next; } g_autoNext[AUTO_SLOTS];
+static uint64_t *auto_slot(const uint8_t *e, uint64_t now)
+{
+    int pick = -1;
+    for (int i = 0; i < AUTO_SLOTS; i++) {
+        if (g_autoNext[i].e == e) return &g_autoNext[i].next;
+        if (pick < 0 && (!g_autoNext[i].e || now >= g_autoNext[i].next)) pick = i;
+    }
+    if (pick < 0) return NULL;                                          /* 64 fauna waiting: try again later */
+    g_autoNext[pick].e = e; g_autoNext[pick].next = 0;
+    return &g_autoNext[pick].next;
+}
+static void auto_bandage(uint8_t *e)
+{
+    void *vit = entity_vitality(e);
+    if (!vit) return;
+    float cur = g_getHealth(vit), max = g_getMaxHealth(vit);
+    if (!(max > 0.f) || !(cur > 0.f) || cur * 100.f >= max * (float)g_autoBelowPct) return;
+    if (g_brainOff && g_brainFlagsOff) {                                /* direct control: the player decides */
+        uint8_t *b = *(uint8_t **)(e + g_brainOff);
+        if (b && (*(uint32_t *)(b + g_brainFlagsOff) & 3) == 1) return;
+    }
+    uint64_t now = GetTickCount64(), *next = auto_slot(e, now);
+    if (!next || now < *next) return;
+    *next = now + 3000;                                                 /* no usable bandage: look again in 3 s */
+    int net = g_isNet();
+    if (net && !g_okBandageNet) return;                                 /* could not be sent to the clients */
+    void *box = g_invGetBox(e);
+    if (!box) return;
+    __attribute__((aligned(16))) uint8_t view[0x100], filter[0x400], pred[0x80];
+    memset(view, 0, sizeof view); memset(filter, 0, sizeof filter); memset(pred, 0, sizeof pred);   /* empty Tags, empty std::function */
+    g_viewCtor(view, box);
+    for (int i = 0; i < 128 && g_viewFind(view, filter, 0, pred); i++) {
+        void **pdef = g_viewGetDef(view); uint8_t *def = pdef ? (uint8_t *)*pdef : NULL;
+        if (!def || !g_hasTag(def + g_defTagsOff, g_tagBandage)) continue;
+        if (!fauna_use_bandage(e, view, def, net)) continue;            /* reserved / in a holder: try the next stack */
+        *next = now + (uint64_t)g_autoCooldownS * 1000;
+        static int nlog; if (nlog < 10) { nlog++; logf_("auto bandage: fauna %p was below %d%% health (%.0f / %.0f) - used a bandage by itself", e, g_autoBelowPct, cur, max); }
+        break;
+    }
+    g_viewDtor(view);
+}
+static uint64_t fx_vit_timer(void *vit, void *a, void *b, void *c)
+{
+    uint64_t r = g_vitTimerOrig(vit, a, b, c);
+    uint8_t *e = vit ? *(uint8_t **)((uint8_t *)vit + g_vitOwnerOff) : NULL;
+    if (!e || !(e[ENT_FLAGS] & 2)) return r;
+    if (g_healActive) healing_tick(e);
+    if (g_wantAutoBandage && is_fauna(e) && !(g_isClient && g_isClient())) auto_bandage(e);
+    return r;
+}
+static int install_bandage_auto(void)
+{
+    int n = 0;
+    for (int i = 0; i < g_vitTimerSiteN; i++) {
+        void *o = NULL;
+        if (redirect_call(g_vitTimerSites[i], (void *)fx_vit_timer, &o, "auto bandage (vitality timer)")) { g_vitTimerOrig = (VitTimerFn)o; n++; }
+    }
+    return n > 0;
 }
 #endif /* FX_TEST */

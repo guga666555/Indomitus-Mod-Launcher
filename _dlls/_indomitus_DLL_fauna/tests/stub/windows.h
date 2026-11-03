@@ -58,7 +58,7 @@ BOOL AllocConsole(void); BOOL SetConsoleTitleA(const char *); HANDLE CreateThrea
 BOOL DisableThreadLibraryCalls(HMODULE); DWORD GetLastError(void);
 typedef struct { uint8_t opaque[40]; } CRITICAL_SECTION; typedef short SHORT;
 void InitializeCriticalSection(CRITICAL_SECTION *); void EnterCriticalSection(CRITICAL_SECTION *); void LeaveCriticalSection(CRITICAL_SECTION *);
-DWORD GetTickCount(void); SHORT GetAsyncKeyState(int);
+DWORD GetTickCount(void); unsigned long long GetTickCount64(void); SHORT GetAsyncKeyState(int);
 #define CALLBACK
 #define EXCEPTION_CONTINUE_SEARCH 0
 #define GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS 4

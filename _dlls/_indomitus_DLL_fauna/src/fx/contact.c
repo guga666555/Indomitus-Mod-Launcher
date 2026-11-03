@@ -20,7 +20,7 @@
 
 typedef void *(*PushStepFn)(void *ch, void *dir, void *target, void *out, uint64_t a5, uint64_t a6);
 typedef uint8_t (*VolHitFn)(void *ctx, void *shape, void *probe, void *xform, void *out);
-static uint8_t *g_pushStep, *g_pushSites[4], *g_volHitSite; static int g_pushSiteN;
+static uint8_t *g_pushStep, *g_pushSites[3], *g_volHitSite; static int g_pushSiteN;
 static PushStepFn g_pushStepOrig; static VolHitFn g_volHitOrig;
 static uint32_t g_volXformOff;
 #define VOL_OWNER 0x40                     /* collision volume -> owning entity (the engine's volume transform update reads it) */
@@ -46,9 +46,9 @@ static int find_contact(void)
         if (next_call(q + 4, 0x30, &site) && site[5] == 0x84 && site[6] == 0xC0) { g_volHitSite = site; g_volXformOff = q[3]; }
     }
     if (!g_volHitSite || g_volXformOff < 0x20 || g_volXformOff > 0x100) { logf_("contact: volume test in the collision step not recognised"); return 0; }
-    for (uint8_t *p = g_text.p; p + 5 <= g_text.p + g_text.n && g_pushSiteN < 4; p++)
-        if (p[0] == 0xE8 && p + 5 + *(int32_t *)(p + 1) == g_pushStep) g_pushSites[g_pushSiteN++] = p;
-    if (!g_pushSiteN || g_pushSiteN > 3) { logf_("contact: collision step has %d callers (expected 1-3)", g_pushSiteN); return 0; }
+    int n = calls_to(g_pushStep, g_pushSites, 3);
+    if (n < 1 || n > 3) { logf_("contact: collision step has %d callers (expected 1-3)", n); return 0; }
+    g_pushSiteN = n;
     logf_("contact: direct-control collision step exe+0x%llX (%d calls), volume test call @ exe+0x%llX (transform vol+0x%X)",
           EXE_OFF(g_pushStep), g_pushSiteN, EXE_OFF(g_volHitSite), g_volXformOff);
     return 1;
@@ -63,7 +63,8 @@ static uint8_t fx_vol_hit(void *ctx, void *shape, void *probe, void *xform, void
         uint8_t *owner = *(uint8_t **)((uint8_t *)xform - g_volXformOff + VOL_OWNER);
         if (owner && owner != fauna && !((uintptr_t)owner & 7)) {
             uint8_t fl = owner[ENT_FLAGS];
-            int human = (fl & 4) != 0, object = !(fl & 2);
+            int human = (fl & 4) != 0, object = !(fl & 2);         /* bit2 human; no bit1 = not an actor (no chassis):
+                                                                     fence, crate, tree... (as the engine's contact code tells them) */
             if (human || (object && g_contactObjects)) {
                 static int logged; if (logged < 8) { logged++; logf_("contact: fauna %p in direct control walks into %s %p (no push-back)", fauna, human ? "soldier" : "object", owner); }
                 return 0;

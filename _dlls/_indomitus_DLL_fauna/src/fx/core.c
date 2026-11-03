@@ -129,6 +129,15 @@ static uint8_t *next_call(uint8_t *p, size_t window, uint8_t **site)
     return NULL;
 }
 
+/* every 'call rel32' in .text whose target == fn: the first max sites go to out[], the return value is the total count */
+static int calls_to(const void *fn, uint8_t **out, int max)
+{
+    int n = 0;
+    for (uint8_t *p = g_text.p; fn && p + 5 <= g_text.p + g_text.n; p++)
+        if (p[0] == 0xE8 && p + 5 + *(int32_t *)(p + 1) == fn) { if (n < max) out[n] = p; n++; }
+    return n;
+}
+
 /* k-th RIP-relative 'lea reg,[rip+disp]' in .text whose target == want */
 static uint8_t *find_lea_to(const void *want, int which)
 {

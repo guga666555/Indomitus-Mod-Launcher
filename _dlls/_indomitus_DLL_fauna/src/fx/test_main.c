@@ -37,6 +37,8 @@ int main(int argc, char **argv)
     printf("box create finder: %s\n", find_box_create() ? "found" : "NOT found");
     printf("--- bandage finders (simulation)\n");
     ok &= find_bandage();
+    ok &= find_bandage_auto();
+    ok &= find_healing_event();
     printf("--- ui finders (game + editor only)\n");
     int ui = find_ui();
     printf("ui finders: %s\n", ui ? "found" : "not found (expected for the dedicated server)");

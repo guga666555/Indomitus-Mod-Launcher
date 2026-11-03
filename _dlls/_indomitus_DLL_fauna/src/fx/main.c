@@ -55,6 +55,15 @@ static void init(HMODULE self)
     int wantBandage = ini_int("fauna_bandage", 1);
     g_bandagePct = ini_int("fauna_bandage_heal_percent", 15);
     if (g_bandagePct < 1) g_bandagePct = 1; if (g_bandagePct > 100) g_bandagePct = 100;
+    g_wantAutoBandage = ini_int("fauna_auto_bandage", 1);
+    g_autoBelowPct = ini_int("fauna_auto_bandage_below", 50);
+    if (g_autoBelowPct < 1) g_autoBelowPct = 1; if (g_autoBelowPct > 99) g_autoBelowPct = 99;
+    g_autoCooldownS = ini_int("fauna_auto_bandage_cooldown", 10);
+    if (g_autoCooldownS < 1) g_autoCooldownS = 1; if (g_autoCooldownS > 600) g_autoCooldownS = 600;
+    g_healEventSecs = ini_int("fauna_healing_event_seconds", 3);
+    if (g_healEventSecs < 0) g_healEventSecs = 0; if (g_healEventSecs > 60) g_healEventSecs = 60;
+    ini_str("fauna_healing_event_start", "start_healing", g_healEventStart, sizeof g_healEventStart);
+    ini_str("fauna_healing_event_stop", "stop_healing", g_healEventStop, sizeof g_healEventStop);
 
     g_okFauna = find_tag_ctor() && find_prop_cond();
     if (!g_okFauna) { logf_("fauna                          OFF (engine code not recognised)"); return; }
@@ -121,6 +130,20 @@ static void init(HMODULE self)
         g_okBandage = find_bandage() && install_bandage();
         if (g_okBandage) logf_("fauna bandages                 ON (double-click a bandage in the inventory: +%d%% of max health)", g_bandagePct);
         else logf_("fauna bandages                 OFF (engine code not recognised)");
+        /* AI-controlled fauna use a bandage by themselves when hurt (host side, same path as the double-click), and the
+           interaction events start_healing / stop_healing around a bandage heal; both run from the vitality timer */
+        if (g_okBandage) {
+            int ev = g_healEventSecs > 0 && find_healing_event();
+            int timer = (g_wantAutoBandage || ev) && find_bandage_auto() && install_bandage_auto();
+            if (!timer) { g_ixCall = NULL; ev = 0; }                   /* a start without its stop would never end */
+            g_okAutoBandage = timer && g_wantAutoBandage;
+            if (!g_wantAutoBandage) logf_("fauna auto bandage             off (ini)");
+            else if (g_okAutoBandage) logf_("fauna auto bandage             ON (AI-controlled fauna below %d%% health use one, every %d s at most)", g_autoBelowPct, g_autoCooldownS);
+            else logf_("fauna auto bandage             OFF (engine code not recognised)");
+            if (g_healEventSecs <= 0) logf_("fauna healing events           off (ini)");
+            else if (ev) logf_("fauna healing events           ON (interaction \"%s\" on a bandage heal, \"%s\" %d s later)", g_healEventStart, g_healEventStop, g_healEventSecs);
+            else logf_("fauna healing events           OFF (engine code not recognised)");
+        }
     }
 
     /* local: HUD (game and editor; the server has no GUI) */

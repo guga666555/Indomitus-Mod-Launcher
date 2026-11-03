@@ -1,4 +1,4 @@
-# GEM Fauna 0.9.0
+# GEM Fauna 0.10.0
 
 Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
 carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
@@ -20,6 +20,8 @@ fails only turns its feature off (see `gem_fauna.log`).
 | members copy the leader's walk/run (double-click) | `fauna_squad_pace` | simulation |
 | members keep their formation slot (the engine lets vehicle-class followers idle until the leader is 15 m away) | `fauna_squad_formation`, `fauna_formation_radius_cm=150` | simulation |
 | double-clicking a bandage in a fauna unit's inventory uses one and heals 15% of max health (nothing is used at full health) | `fauna_bandage`, `fauna_bandage_heal_percent=15` | simulation; multiplayer: the host uses it and sends the result |
+| AI-controlled fauna (not in direct control) below 50% health use a bandage from their inventory by themselves, at most every 10 s | `fauna_auto_bandage`, `fauna_auto_bandage_below=50`, `fauna_auto_bandage_cooldown=10` | simulation (host decides, same path as the double-click) |
+| interaction events on a bandage heal, like a soldier being healed: `start_healing`, then `stop_healing` 3 s later (for the healing marker in the fauna's interaction script) | `fauna_healing_event_seconds=3`, `fauna_healing_event_start`, `fauna_healing_event_stop` | every peer (visual) |
 | double-click run makes a fauna sprint (the "Fast" entry of its chassis), also out of a squad and in walk mode | `fauna_double_click_sprint` | simulation |
 | the sprint request sticks on the fauna's foot chassis: double-click run, and **Shift in direct control** (stamina still limits it) | `fauna_sprint`, `fauna_sprint_debug` | simulation |
 | direct-control HUD: health and stamina rows (human view icons) instead of fuel and speed for fauna | `fauna_dc_hud`, `dc_health_icon`, `dc_stamina_icon`, `dc_vehicle_icon_1/2` | local (game, editor) |
@@ -128,6 +130,24 @@ targets, so GEM Fauna wraps it on every peer and applies the sent health to a fa
 (as for the squad features). If those engine pieces are not recognised, fauna bandages stay off in a network session.
 The first double-clicks on a fauna inventory are logged with the
 operatable/active flags, so a click the engine drops before it becomes an operation shows up in `gem_fauna.log`.
+
+**Automatic use (0.10.0).** The vitality extender's timer (every 0.3 s per unit; host side - it returns at once on a
+client) is wrapped at its single call site. After the engine's tick, a fauna that is not in direct control and is below
+`fauna_auto_bandage_below` % of max health walks its inventory the way `eInventoryRemoveCommand` does (GetBox, item view,
+Find with an empty filter, GetDef) and uses the first item with the `bandage` class tag exactly like a double-click
+(same heal, same multiplayer commands; a reserved stack or one in a holder is skipped for the next). After a bandage it
+waits `fauna_auto_bandage_cooldown` seconds; with no usable one it looks again after 3 s.
+
+**Healing events (0.10.0).** A soldier's healing actions call the interaction events `start_healing` / `stop_healing`
+on him (scripts show the healing marker with them). A fauna's bandage heals at once, so GEM Fauna calls `start_healing`
+on the fauna when a bandage heals it - where it is used (single player, host) and on every client when the host's heal
+arrives - and `stop_healing` `fauna_healing_event_seconds` later, from that unit's own vitality tick on every peer (so
+the call never reaches a unit that left the scene; its slot is simply dropped). The call is
+the engine's own sequence from the soldier's action (Tag, interaction context for the entity, call, destructors). In the
+fauna's interaction script:
+
+    {on "start_healing" {view start ally neutral "marker_healing"}}
+    {on "stop_healing"  {view pause "marker_healing"}}
 
 A Ctrl+number group is not a squad: the engine has no leader for it (same for infantry).
 
@@ -253,6 +273,9 @@ caches its answer per def (64-entry direct-mapped table). Orders, election, sele
 run on player actions only. All debug logs are capped and off by default.
 
 ## History
+- 0.10.0 - AI-controlled fauna use a bandage by themselves below 50% health (`fauna_auto_bandage*`); the interaction
+  events `start_healing` / `stop_healing` are called on a fauna healed by a bandage (`fauna_healing_event_*`).
+  Cleanup: one `calls_to` helper for call-site scans, `fauna_use_bandage` reports whether it used one.
 - 0.9.0 - direct control: foot-chassis fauna walk into soldiers and objects (ram / crush) instead of being pushed back
   by the soldier collision step (`fauna_dc_contact`, `fauna_dc_crush_objects`).
 - 0.8.0 - over-head marker from a def prop `icon_<name>` (replaces icon_vehicle(faction) for fauna, no faction part);
