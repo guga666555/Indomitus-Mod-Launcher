@@ -569,37 +569,55 @@ static std::wstring DllNames(const std::vector<std::wstring>& dlls)
 
 // ================================================================ profile mods
 
-// Documents\my games\gates of hell\profiles\<id>\options.set holds
+// <profiles>\<id>\options.set holds
 //   {mods
 //       "folder_name:0"
 //   }
 // This makes sure the configured mods are in that list before the game starts.
+// The game keeps <profiles> in one of two places, depending on the PC:
+//   Documents\my games\gates of hell\profiles
+//   %LocalAppData%\digitalmindsoft\gates of hell\profiles
+// Both are searched; the most recently written options.set wins (= the profile the game uses now).
 
-static std::wstring ProfilesDir()
+static std::vector<std::wstring> ProfilesDirs()
 {
-    wchar_t docs[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, docs))) return L"";
-    return std::wstring(docs) + L"\\my games\\gates of hell\\profiles";
+    std::vector<std::wstring> out;
+    wchar_t p[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, p)))
+        out.push_back(std::wstring(p) + L"\\my games\\gates of hell\\profiles");
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, p)))
+        out.push_back(std::wstring(p) + L"\\digitalmindsoft\\gates of hell\\profiles");
+    return out;
+}
+
+// For log and error messages: every place that was searched.
+static std::wstring ProfilesDirsText()
+{
+    std::wstring s;
+    for (const auto& d : ProfilesDirs()) { if (!s.empty()) s += L" ; "; s += d; }
+    return s;
 }
 
 static std::wstring FindOptionsSet(const Config& cfg)
 {
-    std::wstring base = ProfilesDir();
-    if (base.empty()) return L"";
-    if (!cfg.modsProfile.empty()) return base + L"\\" + cfg.modsProfile + L"\\options.set";
-
     std::wstring best; FILETIME bestTime{};
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((base + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return L"";
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
-        std::wstring opt = base + L"\\" + fd.cFileName + L"\\options.set";
+    auto consider = [&](const std::wstring& opt) {
         WIN32_FILE_ATTRIBUTE_DATA a{};
-        if (!GetFileAttributesExW(opt.c_str(), GetFileExInfoStandard, &a)) continue;
+        if (!GetFileAttributesExW(opt.c_str(), GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return;
         if (best.empty() || CompareFileTime(&a.ftLastWriteTime, &bestTime) > 0) { best = opt; bestTime = a.ftLastWriteTime; }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
+    };
+    for (const auto& base : ProfilesDirs()) {
+        if (!cfg.modsProfile.empty()) { consider(base + L"\\" + cfg.modsProfile + L"\\options.set"); continue; }
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((base + L"\\*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+            consider(base + L"\\" + fd.cFileName + L"\\options.set");
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    if (!best.empty()) Log(L"profile: %ls", best.c_str());
     return best;
 }
 
@@ -732,7 +750,7 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) {
         // Fresh install: the game creates its profile on the first start. Don't block that start.
-        Log(L"no profile options.set under %ls yet - starting without changing the mod list", ProfilesDir().c_str());
+        Log(L"no profile options.set under %ls yet - starting without changing the mod list", ProfilesDirsText().c_str());
         MessageBoxW(nullptr, L"This looks like the first start of Gates of Hell on this PC - the game has no profile yet,\n"
                              L"so the Indomitus mods can't be switched on for this run.\n\n"
                              L"Let the game reach the main menu, quit, and start it again from this launcher.",
@@ -814,7 +832,7 @@ static bool DisableRequiredMods(const Config& cfg, std::wstring& err, int& remov
     const std::vector<std::wstring> mods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);   // current mod.info files
     if (mods.empty()) return true;
     std::wstring opt = FindOptionsSet(cfg);
-    if (opt.empty() || !PathFileExistsW(opt.c_str())) { err = L"profile options.set not found"; return false; }
+    if (opt.empty() || !PathFileExistsW(opt.c_str())) { err = L"profile options.set not found in " + ProfilesDirsText(); return false; }
     std::string text = ReadFileA(opt);
     if (text.empty()) { err = L"could not read " + opt; return false; }
 

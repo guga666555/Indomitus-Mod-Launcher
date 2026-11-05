@@ -91,6 +91,7 @@ updates signed with the official key, so a fork can never update them.
 |---|---|
 | `mods_marker=` | words that mark a mod for the launcher (default `INDOMITUS MOD LAUNCHER`; case, brackets, underscores and hyphens are ignored, so `[INDOMITUS_MOD_LAUNCHER]` matches too): every local or Workshop mod with it in its `mod.info` `{desc "..."}` is switched on before launch, alphabetically by folder name |
 | `mods_exclusive=` | 1 = switch every other mod off |
+| `mods_profile=` | profile id to edit; empty = the most recently saved profile, searched in both `Documents\my games\gates of hell\profiles` and `%LocalAppData%\digitalmindsoft\gates of hell\profiles` (the game uses either, depending on the PC) |
 | `show_mod_folder_button=`, `show_disable_mods_button=` | hide the two developer buttons for end users |
 | `require_steam=`, `steam_autostart=`, `steam_timeout_ms=` | the Steam check before launching |
 | `update_url=`, `update_exe_url=`, `update_min_version=` | auto-update |
