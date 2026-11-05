@@ -137,7 +137,7 @@ struct Config {
     std::wstring appid = L"400750";
     std::wstring soundHover, soundClick;   // "embedded", "none", or a .wav path
     std::vector<std::wstring> requireMods; // marked mods found when the launcher opened (log only; Play/Disable scan again)
-    std::wstring modsMarker = L"[INDOMITUS_MOD_LAUNCHER]";   // ini: mods_marker= (text in a mod.info {desc ""})
+    std::wstring modsMarker = L"INDOMITUS MOD LAUNCHER";     // ini: mods_marker= (words in a mod.info {desc ""})
     bool         modsExclusive = false;    // true = enable ONLY those
     std::wstring modsProfile;              // profile folder id; empty = most recently used
     bool         showModFolderButton = true; // ini: show_mod_folder_button=
@@ -649,7 +649,25 @@ static std::string AsciiLower(std::string s)
     return s;
 }
 
-static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& markerLower)
+// Loose form used to compare the marker with a description: lower case, and every ASCII character
+// that is not a letter or digit ([ ] _ - . , spaces, ...) becomes one space, with a space at each end.
+// So "[INDOMITUS_MOD_LAUNCHER]", "INDOMITUS MOD LAUNCHER" and "indomitus-mod-launcher" are the same
+// text, and the marker only matches whole words ("indomitus mod launchers" does not match).
+static std::string MarkerKey(const std::string& s)
+{
+    std::string k = " ";
+    for (char ch : AsciiLower(s)) {
+        unsigned char c = (unsigned char)ch;
+        bool word = c >= 0x80 || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');   // >= 0x80: UTF-8 letters
+        if (word) k += ch;
+        else if (k.back() != ' ') k += ' ';
+    }
+    if (k.back() != ' ') k += ' ';
+    return k;
+}
+
+// markerKey: MarkerKey() of the marker.
+static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& markerKey)
 {
     std::string t = ReadFileA(modInfo);
     if (t.size() >= 2 && (unsigned char)t[0] == 0xFF && (unsigned char)t[1] == 0xFE) {   // UTF-16 LE file
@@ -663,12 +681,12 @@ static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& mar
         if (q1 >= t.size() || t[q1] != '"') continue;              // "{description" or similar, not {desc "..."}
         size_t q2 = t.find('"', q1 + 1);
         if (q2 == std::string::npos) break;
-        if (AsciiLower(t.substr(q1 + 1, q2 - q1 - 1)).find(markerLower) != std::string::npos) return true;
+        if (MarkerKey(t.substr(q1 + 1, q2 - q1 - 1)).find(markerKey) != std::string::npos) return true;
     }
     return false;
 }
 
-static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerLower, std::vector<std::wstring>& out)
+static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerKey, std::vector<std::wstring>& out)
 {
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
@@ -680,7 +698,7 @@ static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const
         for (wchar_t c : name) if (!(iswalnum(c) || c == L'_' || c == L'-')) { valid = false; break; }
         if (!valid) continue;
         std::wstring info = dir + L"\\" + name + L"\\mod.info";
-        if (!PathFileExistsW(info.c_str()) || !ModInfoHasMarker(info, markerLower)) continue;
+        if (!PathFileExistsW(info.c_str()) || !ModInfoHasMarker(info, markerKey)) continue;
         std::wstring entry = prefix + name;
         for (auto& c : entry) c = towlower(c);
         out.push_back(entry);
@@ -693,8 +711,8 @@ static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const
 static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, const std::wstring& appid, const std::wstring& marker)
 {
     std::vector<std::wstring> out;
-    if (marker.empty()) return out;
-    std::string m = AsciiLower(Utf8(marker));
+    std::string m = MarkerKey(Utf8(marker));
+    if (m == " ") return out;                                                // empty (or only brackets) = no marker
     std::wstring root = DirOf(DirOf(DirOf(gameExe)));                       // binaries\x64\exe -> game root
     ScanMarkedMods(root + L"\\mods", L"", m, out);
     ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, out);   // <library>\steamapps\...
@@ -2692,7 +2710,7 @@ static int RealMain(int argc, wchar_t** argv)
         cfg.appid      = ReadIni(L"appid", L"400750");
         cfg.soundHover = ReadIni(L"sound_hover", L"embedded");
         cfg.soundClick = ReadIni(L"sound_click", L"embedded");
-        cfg.modsMarker    = ReadIni(L"mods_marker", L"[INDOMITUS_MOD_LAUNCHER]");
+        cfg.modsMarker    = ReadIni(L"mods_marker", L"INDOMITUS MOD LAUNCHER");
         cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
         cfg.modsProfile   = ReadIni(L"mods_profile");
         cfg.showModFolderButton = ReadIni(L"show_mod_folder_button", L"1") != L"0";

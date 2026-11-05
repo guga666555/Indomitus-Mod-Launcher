@@ -89,7 +89,7 @@ updates signed with the official key, so a fork can never update them.
 
 | Key | Meaning |
 |---|---|
-| `mods_marker=` | text that marks a mod for the launcher (default `[INDOMITUS_MOD_LAUNCHER]`): every local or Workshop mod with it in its `mod.info` `{desc "..."}` is switched on before launch, alphabetically by folder name |
+| `mods_marker=` | words that mark a mod for the launcher (default `INDOMITUS MOD LAUNCHER`; case, brackets, underscores and hyphens are ignored, so `[INDOMITUS_MOD_LAUNCHER]` matches too): every local or Workshop mod with it in its `mod.info` `{desc "..."}` is switched on before launch, alphabetically by folder name |
 | `mods_exclusive=` | 1 = switch every other mod off |
 | `show_mod_folder_button=`, `show_disable_mods_button=` | hide the two developer buttons for end users |
 | `require_steam=`, `steam_autostart=`, `steam_timeout_ms=` | the Steam check before launching |
