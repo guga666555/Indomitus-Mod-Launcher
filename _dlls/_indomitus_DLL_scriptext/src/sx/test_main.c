@@ -34,6 +34,7 @@ int main(int argc, char **argv)
     if (find_cstr("enemyTeam")) ok &= find_mp_teams(); else printf("(no bot API: alliances only)\n");
     printf("--- damage multiplier\n"); ok &= find_mult();
     printf("--- mod gate\n"); ok &= find_mod_list();
+    printf("--- talk {seen}\n"); ok &= find_seen();
     if (g_talkEvent) {
         int pro = prologue_len((const uint8_t *)g_talkEvent);
         printf("Entity::TalkEvent prologue: %02X %02X %02X %02X %02X %02X %02X %02X -> relocate %d bytes%s\n",

@@ -18,10 +18,11 @@
  *
  * Hook: SpawnBullet (chainable, shared with GEM Overcharge and GEM Guidance). For tagged weapons the direction
  * is rotated by (normalize(aimPoint - shooterPos) - normalize(foresightDir)): spread and zeroing survive, only
- * the parallax between the barrel and the sight is taken out.
+ * the parallax between the barrel and the sight is taken out. 1.1.1: only when the sight itself is within
+ * MaxAngle of the aim point - while the turret is still traversing toward the cursor, no correction.
  */
 #define GEM_NAME    "GEM Converge"
-#define GEM_VERSION "1.1"
+#define GEM_VERSION "1.1.1"
 #define GEM_SECT    L"converge"
 #include "../common/gem_common.h"
 
@@ -29,6 +30,8 @@ static SpawnBulletFn g_spawnBulletOrig;
 static char g_tag[64] = "converge";
 static size_t g_tagLen;
 static double g_minDist = 3.0;
+static double g_maxAngle = 10.0;      /* degrees: the sight must be this close to the aim point for a correction */
+static double g_cosMax;
 static int g_allowNet = 0;
 static int g_logShots = 10;
 static double g_bulletSpread = 3.0;   /* cone half-angle, degrees */
@@ -83,10 +86,21 @@ static char hook_spawn_bullet(void *shooter, int syncIdx, float *zero, float *di
             double cv[3] = { aim[0] - bpos[0], aim[1] - bpos[1], aim[2] - bpos[2] };
             dist = vnorm(cv);
             const double *fd = ((AimerGetVecFn)(*(void ***)aimer)[g_aimerDirSlot / 8])(aimer);
+            const double *sp = ((AimerGetVecFn)(*(void ***)aimer)[g_aimerPosSlot / 8])(aimer);
             double nom[3] = { fd[0], fd[1], fd[2] };
-            if (dist >= g_minDist && vnorm(nom) > 1e-9) {
+            /* Is the sight actually ON the aim point? Under direct control the aim point is where the gun is
+               COMMANDED to point (the cursor), and the engine fires along the foresight while the turret is still
+               traversing. Correcting toward a point the sight is not looking at would turn the shot all the way to
+               the cursor (140 deg off the barrels was seen), so convergence only takes out parallax: the sight must
+               be within MaxAngle of the aim point, which it is as soon as the turret has settled. */
+            double sv[3] = { aim[0] - sp[0], aim[1] - sp[1], aim[2] - sp[2] };
+            double onTarget = (vnorm(sv) > 1e-9 && vnorm(nom) > 1e-9) ? nom[0]*sv[0] + nom[1]*sv[1] + nom[2]*sv[2] : -1.0;
+            if (dist >= g_minDist && onTarget >= g_cosMax) {
                 double c[3] = { d[0] + cv[0] - nom[0], d[1] + cv[1] - nom[1], d[2] + cv[2] - nom[2] };
                 if (vnorm(c) > 1e-9) { nd[0] = c[0]; nd[1] = c[1]; nd[2] = c[2]; }
+            } else if (g_logShots > 0 && onTarget < g_cosMax) {
+                g_logShots--;
+                logf_("shot: bone %s, sight %.1f deg off the aim point (turret still turning?) - no correction", boneName, acos(onTarget > 1 ? 1 : onTarget) * 57.29578);
             }
         }
     }
@@ -140,8 +154,8 @@ static int setup(int install)
         logf_("barrel convergence / multi-shot   OFF (engine code not recognised)");
         return 0;
     }
-    logf_("barrel convergence / multi-shot   ON (stuff tags \"%s\", bullets_per_shot_N, bullet_spread_N; default cone %g deg, min distance %g, multiplayer %s)",
-          g_tag, g_bulletSpread, g_minDist, g_allowNet ? "allowed" : "off");
+    logf_("barrel convergence / multi-shot   ON (stuff tags \"%s\", bullets_per_shot_N, bullet_spread_N; default cone %g deg, min distance %g, sight within %g deg, multiplayer %s)",
+          g_tag, g_bulletSpread, g_minDist, g_maxAngle, g_allowNet ? "allowed" : "off");
     log_mp_note(g_allowNet);
     return 1;
 }
@@ -151,6 +165,10 @@ static void read_config(void)
     ini_str("Tag", "converge", g_tag, sizeof g_tag);
     g_tagLen = strlen(g_tag);
     g_minDist = ini_int("MinDistance", 3);
+    g_maxAngle = ini_int("MaxAngle", 10);
+    if (g_maxAngle < 1) g_maxAngle = 1;
+    if (g_maxAngle > 90) g_maxAngle = 90;
+    g_cosMax = cos(g_maxAngle * 0.01745329);
     g_allowNet = ini_int("AllowMultiplayer", 0);
     g_logShots = g_verbose ? ini_int("LogShots", 10) : 0;
     g_bulletSpread = ini_int("BulletSpread", 3);

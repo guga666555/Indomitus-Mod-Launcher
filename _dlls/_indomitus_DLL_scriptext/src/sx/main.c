@@ -176,6 +176,13 @@ static void init(HMODULE self)
         } else logf_("events                         OFF (engine code not recognised)");
     } else logf_("events                         off (ini)");
 
+    /* talk condition {seen enemy <prop|tag> N}: read only (sensor lists, def props, runtime tags) */
+    if (ini_int("seen_tags", 1)) {
+        if (!g_tagCtorCStr || !g_tagDtor) find_fire_named();
+        int okSeen = g_tagCtorCStr && g_tagDtor && find_seen() && install_seen();
+        logf_("{seen ... <prop|tag> N} (talk)  %s", okSeen ? "ON (other words = def prop or runtime tag)" : "OFF (engine code not recognised)");
+    } else logf_("{seen} prop/tag words          off (ini)");
+
     if (g_requireMod[0]) {
         if (!find_mod_list()) { logf_("Mod gate: cannot read the mod list - events stay OFF (require_mod=%s)", g_requireMod); g_modActive = 0; g_requireMod[0] = 0; }
         else { g_modActive = 0; logf_("Mod gate: events wait for an enabled mod matching \"%s\"", g_requireMod); }

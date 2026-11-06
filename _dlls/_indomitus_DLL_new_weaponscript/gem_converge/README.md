@@ -1,4 +1,4 @@
-# GEM Converge 1.1 — barrel convergence + multi-shot
+# GEM Converge 1.1.1 — barrel convergence + multi-shot
 
 Module `gem_converge.c` of **`gem_weaponscript.dll`**; settings in the `[converge]` section of `gem_weaponscript.ini`. Shared code: `..\common\gem_common.h`. Launcher integration / install: `..\README.md`.
 
@@ -34,7 +34,11 @@ The hook wraps `SpawnBullet`. For a `converge` weapon it asks the engine's own a
 (`GetAimPoint(aimer, double3*)`: raycast along the foresight for the gun's range under direct control, else the
 aimer's cached target point) and rotates `dir` by `normalize(aimPoint − shooterPos) − normalize(foresightDir)`.
 Spread and zeroing survive; only the parallax between barrel and sight is removed. Below `MinDistance` nothing
-changes. For multi-shot it calls the next hook / the original N times with directions scattered over the cone.
+changes. The correction is applied only while the sight itself is within `MaxAngle` of the aim point: under direct
+control the aim point is where the gun is *commanded* to point (the cursor) and the engine fires along the
+foresight while the turret traverses, so without this test a shot fired mid-traverse was turned all the way to the
+cursor (1.1.0, seen 140° off the barrels). Those shots now go where the barrels point, as in vanilla, and are
+logged as `sight N deg off the aim point ... no correction`. For multi-shot it calls the next hook / the original N times with directions scattered over the cone.
 
 Pellet offsets are not random numbers: they are hashed (splitmix64) from the shot's own direction and aim point,
 so every lockstep machine computes the same cone. On a host spawning a `{SyncedProjectiles 1}` weapon the extra
@@ -48,6 +52,7 @@ fire a single bullet).
 | `Enabled` | 1 | 1 | 0 = do nothing |
 | `Tag` | converge | converge | convergence stuff tag |
 | `MinDistance` | 3 | 3 | no correction when the aim point is closer (world units, 20 = 1 m) |
+| `MaxAngle` | 10 | 10 | the sight must be within this many degrees of the aim point (else the turret is still turning: no correction) |
 | `AllowMultiplayer` | 1 | 0 | 0 = stand down in network games |
 | `BulletSpread` | 3 | 3 | default cone half-angle (degrees) |
 | `BulletsPerShotMax` | 32 | 32 | largest N accepted |

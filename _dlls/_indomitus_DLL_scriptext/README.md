@@ -1,7 +1,8 @@
-# GEM ScriptExt 0.9.1
+# GEM ScriptExt 0.10.0
 
 Engine extender for **Call to Arms: Gates of Hell** (GEM engine, game 1.067). It adds script words to
-`interaction_entity` scripts: conditions, health actions, a damage multiplier and named events. One DLL works in the
+`interaction_entity` scripts: conditions, health actions, a damage multiplier and named events, and prop/tag words to
+the talk condition `{seen ...}`. One DLL works in the
 game, the editor and the dedicated server.
 
 The fauna features (health row in the vehicle panel, squad strip items, fauna squad leaders) were removed in 0.8.0;
@@ -82,6 +83,37 @@ unit the condition is about and a reference:
   results differ between PCs: use them only for local effects, not to change game state.
 * A unit that the engine does not count as operatable (for example still being placed) is `neutral`.
 
+### Talk condition `{seen ...}` with prop / tag words
+
+The talk situation condition `{seen <relation> <classes> N}` (eActorTalkScanner) counts the units the speaker's sensor
+sees right now and is true when there are at least N. Vanilla knows only fixed class words, each tested against the
+seen unit's def `{props}`. With ScriptExt **any other word is a prop or tag name**: the seen unit matches when its def
+`{props}` **or** its runtime tags (`{tags}` actions, breed tags, the list `{if tagged "x"}` reads) contain it.
+
+| Script | Counts |
+|---|---|
+| `{seen enemy tank 1}` | vanilla, unchanged: seen enemies whose props have `tank` |
+| `{seen enemy daemon 1}` | seen enemies with prop **or** tag `daemon` |
+| `{seen enemy tank daemon 2}` | at least 2 seen enemies that are tanks **or** carry `daemon` |
+| `{seen ally nurgle_id 3}` | at least 3 seen allies with prop or tag `nurgle_id` |
+
+```
+{condition
+    {seen enemy daemon 1}
+}
+```
+
+* Words are OR'ed, like the vanilla class words. Vanilla words: `enemy`, `ally` (relation), `tank car cannon airborne
+  helicopter human vehicle any` (classes). Anything else, bare or quoted, is a prop/tag name (lower/upper case does
+  not matter).
+* As in vanilla, put `enemy` / `ally` **first**: in the engine they reset the class words read before them
+  (`{seen tank enemy 1}` = `{seen enemy 1}`, which counts nothing). Prop/tag words are kept wherever they stand.
+* Without a relation word every seen unit counts (vanilla default class `any` = human or vehicle props, plus the
+  prop/tag words).
+* Without the DLL the extra words log `unknown` (0xBAD0001) and are ignored, so `{seen enemy daemon 1}` counts nothing.
+* Read only (sensor, props, tags): nothing changes game state. Limits: 8 prop/tag words per condition, 256 different
+  words and 1024 different word sets in all (more are logged and ignored).
+
 ### Actions (change game state, see [Multiplayer](#multiplayer))
 
 | Script | Meaning |
@@ -155,6 +187,8 @@ the newest folder is the latest run). At startup every feature prints `ON`, `off
 | `{if team}: player 3 is in multiplayer team "b"` | the battle team of a player, read the first time a script asks (first 24) |
 | `{if team}: no multiplayer session - player 1 is in alliance team 2` | (`verbose=1`) outside a multiplayer battle (first 8) |
 | `{if player enemy}: unit of player 1 vs the effector's player 0 -> enemy` | (`verbose=1`) what ally/neutral/enemy compared (first 12) |
+| `{seen}: word 'daemon' = prop or tag (Tag ...)` | a talk `{seen}` condition used a prop/tag word (once per word) |
+| `{seen} with prop/tag words: entity ... sees 2 matching (needs 1) -> 1` | (`verbose=1`) first 20 evaluations of such a condition |
 | `EXCEPTION 0x... at ...` | (`crash_log=1`) fatal exception, registers and a stack scan |
 | `ExitProcess(...) called from ...` | (`crash_log=1`) who ended the process; `exit trace ... done by another DLL` means a DLL loaded earlier (e.g. GEM Fauna) already writes this in its own log |
 | `C++ exception thrown (...): a < b < c` | (`crash_log=1`) one line per distinct call chain (max 8). The engine throws and catches a few at every start: harmless unless a crash follows |
@@ -165,7 +199,8 @@ the newest folder is the latest run). At startup every feature prints `ON`, `off
   `pip install ziglang`). Output: `dist\gem_scriptext.dll` (+ a copy of the ini).
 * **Offline check** (Linux/WSL, gcc + clang): `sh tests/run_offline_check.sh <call_to_arms.exe> [editor] [server]`.
   It maps each exe and runs every finder (run this after a game update), tests the `{multiplier}` stub against fake
-  parser frames (`tests/mult_stub_test.c`), and checks the Windows build (x86-64, LLP64) with the fake headers in
+  parser frames (`tests/mult_stub_test.c`) and the `{seen}` runtime against fake readers, Tags and entities
+  (`tests/seen_stub_test.c`), and checks the Windows build (x86-64, LLP64) with the fake headers in
   `tests/stub` and the `build.bat` warnings as errors.
 
 ## Source layout
@@ -183,6 +218,7 @@ the newest folder is the latest run). At startup every feature prints `ON`, `off
 | `sx/multiplier.c` | `{multiplier X}` |
 | `sx/teams.c` | `{if player N|ally|neutral|enemy}`, `{if team N}` |
 | `sx/conditions.c` | the added `{if}` conditions |
+| `sx/seen.c` | talk condition `{seen ...}`: prop / tag words |
 | `sx/modgate.c` | `require_mod`: named events fire only while a matching mod is enabled |
 | `sx/events.c` | named events from `Entity::TalkEvent` |
 | `sx/crashlog.c` | crash and process-exit logging |
@@ -214,6 +250,12 @@ Verified on 1.067: game `6AB3DCC7`, editor `6AB3DD83`, server `6AB3DD21`.
   same player, matrix) with the reference from the script context: context[0] is the script's unit, context[1] the
   effector (valid when the flag the `{if effector}` condition tests is set); `{with_effector}` swaps the two. The local
   player comes from the getter next to `GetRelation` that `{if fogged}` also uses.
+* **talk `{seen}`:** the condition object is `{vtable, child conditions, mask, count}` with no spare room. Two of its
+  vtable slots are swapped (no code patch). parse runs the vanilla word loop - the keyword -> mask operations are read
+  out of the vanilla parser at startup - and keeps the other words as engine Tags in an interned, append-only set
+  whose index goes into the mask's high bits (vanilla uses bits 0..9). eval: without a set it is the original eval;
+  with one it is the vanilla count loop (sensor lists, relation, the class Tags read out of the vanilla count
+  function) plus "def props or runtime tags contain a word". The runtime tag list is found through `{if tagged}`.
 * **multiplier:** the block parser's "unknown block" error call is redirected to a stub that reads `{multiplier X}` for
   pierce/blast; the value lives in the object's unused padding word and the amount slot multiplies by it.
 
@@ -232,6 +274,9 @@ Verified on 1.067: game `6AB3DCC7`, editor `6AB3DD83`, server `6AB3DD21`.
 
 ## Changelog
 
+* **0.10.0** talk condition `{seen ...}`: any word other than the vanilla relation/class words is a prop or tag name
+  (`{seen enemy daemon 1}`): the seen unit matches when its def props or its runtime tags contain it, OR'ed with the
+  class words. ini: `seen_tags`. New host test `tests/seen_stub_test.c`.
 * **0.9.1** `{if player ally}`, `{if player neutral}`, `{if player enemy}`: the engine's relation between the unit and
   the effector (inside `{with_effector}`: between the effector and the script's unit), or the local player when the
   event has no effector. Conditions now get the whole script context.

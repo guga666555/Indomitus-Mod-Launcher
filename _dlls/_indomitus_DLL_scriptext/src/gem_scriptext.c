@@ -10,6 +10,7 @@
  *             {on "move_order"},
  *             {on "selection_of_units"}, {on "talk_<name>"}, {health_damage_count ...},
  *             {multiplier X} in {health_damage_pierce|blast ...}
+ *   talk      {seen enemy <prop or tag> N} (words other than the vanilla classes = props or tags)
  *   diag      crash log
  *
  * Injected by the Indomitus launcher under any name, or installed as a dbghelp.dll proxy (twelve exports
@@ -24,6 +25,7 @@
  *   sx/multiplier.c  {multiplier X} in damage blocks
  *   sx/teams.c       {if player N}, {if team N}
  *   sx/conditions.c  added {if} conditions
+ *   sx/seen.c        talk condition {seen ...}: any other word = a prop or tag name
  *   sx/modgate.c     require_mod (gates the named events)
  *   sx/events.c      named events from Entity::TalkEvent
  *   sx/crashlog.c    crash / process-exit logging
@@ -49,7 +51,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define SX_VERSION "0.9.1"
+#define SX_VERSION "0.10.0"
 #define SX_NAME    "GEM ScriptExt"
 #define SX_INI     L"\\gem_scriptext.ini"
 #define SX_LOG     L"\\gem_scriptext.log"
@@ -62,6 +64,7 @@
 #include "sx/multiplier.c"
 #include "sx/teams.c"
 #include "sx/conditions.c"
+#include "sx/seen.c"
 #include "sx/modgate.c"
 #include "sx/events.c"
 #include "sx/crashlog.c"
