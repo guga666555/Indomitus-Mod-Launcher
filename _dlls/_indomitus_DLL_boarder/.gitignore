@@ -1,0 +1,5 @@
+dist/
+out/
+.zig-cache/
+build_log.txt
+test/bf_host_test
