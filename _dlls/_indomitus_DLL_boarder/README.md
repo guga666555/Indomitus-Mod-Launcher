@@ -1,27 +1,28 @@
-# GEM BoardFilter 0.3
+# GEM BoardFilter 0.4
 
-Restricts who may crew / board a vehicle with **def props**. Call to Arms: Gates of Hell 1.067 (game, editor, server).
+Restricts who may crew / board a vehicle with **entity tags**. Call to Arms: Gates of Hell 1.067 (game, editor, server).
 Indomitus Launcher payload dll (`gem_boardfilter.dll` + `gem_boardfilter.ini`). 0.1 by Alex; 0.2 launcher adaptation;
-0.3 the `crew_only_` rule. Engine side in depth: `WRITEUP.md` (written for 0.1: its rule section is the old board_/boarder_
-scheme, everything about hooks, popup and engine sites still holds).
+0.3 a `crew_only_` def-prop rule; 0.4 Alex's 0.1 rule back (the mod uses it in 151 files). Engine side in depth: `WRITEUP.md`
+(written for 0.1; rule, hooks, popup and engine sites all hold for 0.4).
 
 ## Rule
 
-| Where | What | Meaning |
+| Tag | On | Meaning |
 |---|---|---|
-| vehicle `.def` | `{props "crew_only_<tag>"}` (any number) | only humans with one of those `<tag>`s may board it |
-| vehicle `.def` | no `crew_only_` prop | anyone may board (vanilla) |
-| human | its engine tags + its def `{props}` | checked against the vehicle's list |
+| `board_<class>` | vehicle | humans of `<class>` may board it (any number of these tags) |
+| no `board_` tag | vehicle | classes from ini `DefaultBoard` (default `mortal`; empty = anyone) |
+| `no_board` | vehicle | nobody may board it (ini `NoBoardTag`) |
+| `boarder_<class>` | human | the human's class (any number) |
+| no `boarder_` tag | human | classes from ini `DefaultClass` (default `mortal`) |
 
-Matching is exact and case-sensitive, like the engine's own tag checks. Only the vehicle's def **props** count (a runtime tag
-`crew_only_x` on a vehicle is ignored). Non-humans are never filtered.
+A human may board when one of its classes is in the vehicle's list. Runtime tags only, read on every check, so
+`{tags add "no_board"}` etc. act at once. Exact, case-sensitive match, like the engine's own tag checks. Non-humans are never
+filtered. Def props are not read: the mod's `40k_vehicle_main.inc` turns vehicle def props `board_mortal / board_astartes /
+board_daemon / no_board` into tags on spawn, and SM/CSM breeds carry `boarder_astartes` in their breed `{tags}` (made real
+entity tags by GEM BreedTags, which is in the payload).
 
-Example: a human tagged `astartes` and a vehicle with `{props "crew_only_gretchin"}` → refused. The vehicle with
-`{props "crew_only_gretchin" "crew_only_astartes"}` → accepted; a `guard` human → refused.
-
-Human tags come from the breed `{tags}` (made real entity tags by GEM BreedTags, which is in the payload), script
-`{tags add "..."}` (live), or the human's own `.def` `{props}`. Nothing needs converting in `40k_vehicle_main.inc` any more; that
-file only needs the `{on "board_refused"}` popup block. The ini prefix is `PropPrefix=crew_only_`.
+Example: an untagged Guard vehicle (= `board_mortal`) refuses a `boarder_astartes` marine and takes a guardsman or a scout
+(no `boarder_` tag = `mortal`); a daemon engine (`board_daemon`) refuses both.
 
 ## What happens in game
 
@@ -63,6 +64,15 @@ file only needs the `{on "board_refused"}` popup block. The ini prefix is `PropP
 Entity runtime tags at `+0x4E8`, def `+0x548`, def props `+0x330` in all three (taken from the engine's own code). The dll replaces the first 14 (A) / 16 (B) bytes with a
 jump to a stub: check → refusal returns false, otherwise the replaced instructions run (the `je` re-targeted) and execution
 continues in the original.
+
+## 0.4 changes (2026-11-06)
+
+- The 0.1 rule is back (table above): vehicle `board_<class>` / `no_board` tags, human `boarder_<class>` tags, ini
+  `VehiclePrefix UnitPrefix NoBoardTag DefaultBoard DefaultClass`. `crew_only_` / `PropPrefix` are gone.
+- Everything from 0.2/0.3 is kept: finders, stubs, mutex, pin, SRW lock, popup event + throttle. The def-props finder only logs
+  now (a miss no longer blocks the install).
+- Offline test: Windows exe mapping made writable (`VirtualProtect`; the 0.3 test crashed on Windows in the after-patch check);
+  25 rule cases + ini defaults; passes on game / editor / server 1.067.
 
 ## 0.3 changes (2026-11-06)
 
