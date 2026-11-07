@@ -1,13 +1,16 @@
-/* GEM BoardFilter 0.3 - crew restriction for vehicles by def prop
+/* GEM BoardFilter 0.4 - who may crew/board a vehicle, by entity tags
  * Call to Arms: Gates of Hell (GEM 2, 1.067). Indomitus Launcher payload dll
- * (gem_boardfilter.dll + gem_boardfilter.ini). 0.1 by Alex; 0.2 = launcher adaptation; 0.3 = crew_only_ rule.
+ * (gem_boardfilter.dll + gem_boardfilter.ini). 0.1 by Alex; 0.2 = launcher adaptation; 0.3 = crew_only_ rule;
+ * 0.4 = Alex's 0.1 board_/boarder_ rule back on the 0.2/0.3 code.
  *
- * Rule:
- *   vehicle .def {props "crew_only_<tag>"} (any number) -> only humans that have one of those <tag>s may board it
- *   vehicle without any crew_only_ prop                -> unrestricted (vanilla)
- *   a human's tags = its engine tags (runtime tags: breed {tags} via GEM BreedTags, script {tags add}) and its
- *   own def {props}. Exact, case-sensitive match, like the engine's own tag checks.
- *   Only def PROPS of the vehicle count (runtime tags on the vehicle are ignored). Non-humans are never filtered.
+ * Rule (runtime tags only, read on every check, so script {tags add/remove} acts at once):
+ *   vehicle tag "board_<class>" (any number) -> humans of one of those classes may board it
+ *   vehicle without a board_ tag             -> classes from ini DefaultBoard (default "mortal"; empty = anyone)
+ *   vehicle tag "no_board"                   -> nobody may board it
+ *   human tag "boarder_<class>" (any number) -> the human's classes (breed {tags} via GEM BreedTags, {tags add})
+ *   human without a boarder_ tag             -> classes from ini DefaultClass (default "mortal")
+ *   Exact, case-sensitive match, like the engine's own tag checks. Non-humans are never filtered.
+ *   The mod turns vehicle def props board_<class> / no_board into these tags on spawn (40k_vehicle_main.inc).
  *
  * Engine (game exe offsets, found by pattern at runtime, same code in editor/server):
  *   core  exe+0x7FA9D0 CanCrew(vehicle, playerByte*): vehicle script tag "abandoned" -> false,
@@ -19,6 +22,9 @@
  *         ("emit_wrong_crew").
  * This dll replaces the first bytes of A and B with a jump to a stub that asks bf_allow() first;
  * a refusal returns false, otherwise the original code runs unchanged.
+ *
+ * 0.4 (2026-11-06): the board_/boarder_/no_board/DefaultBoard/DefaultClass rule is back (Alex: the mod's 151 files
+ *   use it); crew_only_ removed. Finders, stubs, popup event, lock and def-prop offsets unchanged from 0.3.
  *
  * 0.3 (2026-11-06): board_/boarder_/no_board/DefaultBoard/DefaultClass replaced by the crew_only_<tag> prop rule
  *   above (user's design). Def props offsets voted from the engine's own def-props loads (def +0x548, props +0x330).
@@ -43,13 +49,14 @@
 #include <stdarg.h>
 #include <wchar.h>
 
-#define BF_VERSION "0.3"
-#define MAXC 32         /* crew_only_ props per vehicle that are honoured */
+#define BF_VERSION "0.4"
+#define MAXC 32         /* classes per vehicle / per unit that are honoured */
 #define CLEN 64
 
 /* ---------------------------------------------------------------- config */
 static int  cfg_enabled = 1, cfg_eject = 1, cfg_log = 1;
-static char cfg_pre[CLEN] = "crew_only_";
+static char cfg_vpre[CLEN] = "board_", cfg_upre[CLEN] = "boarder_", cfg_noboard[CLEN] = "no_board";
+static char cfg_defboard[256] = "mortal", cfg_defclass[256] = "mortal";
 static uint32_t cfg_tagoff = 0x4E8;     /* runtime tags; replaced by the offset read from the engine's own code */
 static uint32_t cfg_defoff = 0x548;     /* entity -> def; voted from the engine's def-props loads */
 static uint32_t cfg_propoff = 0x330;    /* def -> {props} Tag vector */
@@ -115,31 +122,52 @@ static int each_tag_vec(const uint8_t *vec, tagfn fn, void *ctx)
     }
     return 1;
 }
-static const uint8_t *def_of(const uint8_t *ent) { return *(const uint8_t *const *)(ent + cfg_defoff); }
-
-/* vehicle: collect the <tag> of every "crew_only_<tag>" def prop */
-typedef struct { const char *pre; size_t plen; char cls[MAXC][CLEN]; uint8_t len[MAXC]; int n, dropped; } req_t;
-static int collect_req(const char *s, size_t n, void *vp)
+/* a set of classes: the <class> part of board_<class> / boarder_<class> tags, or an ini default list */
+typedef struct { char cls[MAXC][CLEN]; uint8_t len[MAXC]; int n, dropped; } cls_t;
+static void cls_add(cls_t *c, const char *s, size_t k)
 {
-    req_t *r = (req_t *)vp;
-    if (n <= r->plen || memcmp(s, r->pre, r->plen)) return 0;
-    size_t k = n - r->plen;
-    if (k >= CLEN || r->n >= MAXC) { r->dropped++; return 0; }
-    memcpy(r->cls[r->n], s + r->plen, k);
-    r->cls[r->n][k] = 0;
-    r->len[r->n] = (uint8_t)k;
-    r->n++;
+    if (!k) return;                                             /* bare prefix: no class */
+    if (k >= CLEN || c->n >= MAXC) { c->dropped++; return; }
+    memcpy(c->cls[c->n], s, k);
+    c->cls[c->n][k] = 0;
+    c->len[c->n] = (uint8_t)k;
+    c->n++;
+}
+/* "mortal, guard" -> {mortal, guard}; empty list -> empty set */
+static void cls_from_list(cls_t *c, const char *list)
+{
+    c->n = c->dropped = 0;
+    for (const char *p = list; *p; ) {
+        while (*p == ' ' || *p == ',' || *p == '\t') p++;
+        const char *b = p;
+        while (*p && *p != ',') p++;
+        const char *e = p;
+        while (e > b && (e[-1] == ' ' || e[-1] == '\t')) e--;
+        cls_add(c, b, (size_t)(e - b));
+    }
+}
+static int cls_meet(const cls_t *a, const cls_t *b)
+{
+    for (int i = 0; i < a->n; i++)
+        for (int j = 0; j < b->n; j++)
+            if (a->len[i] == b->len[j] && !memcmp(a->cls[i], b->cls[j], a->len[i])) return 1;
+    return 0;
+}
+static cls_t g_defboard, g_defclass;    /* parsed from the ini at load */
+
+/* one entity's runtime tags: classes after the prefix, plus the no_board tag (vehicles) */
+typedef struct { const char *pre; size_t plen; const char *nob; size_t nlen; cls_t *c; int noboard; } scan_t;
+static int scan_tags(const char *s, size_t n, void *vp)
+{
+    scan_t *t = (scan_t *)vp;
+    if (t->nob && n == t->nlen && !memcmp(s, t->nob, n)) { t->noboard = 1; return 0; }
+    if (n >= t->plen && !memcmp(s, t->pre, t->plen)) cls_add(t->c, s + t->plen, n - t->plen);
     return 0;
 }
 
-/* human: does any of its tags equal one of the required ones? */
-typedef struct { const req_t *r; int hit; } has_t;
-static int match_req(const char *s, size_t n, void *vp)
+static void cls_names(const cls_t *c, char *buf, size_t cap)
 {
-    has_t *h = (has_t *)vp;
-    for (int i = 0; i < h->r->n; i++)
-        if (h->r->len[i] == n && !memcmp(h->r->cls[i], s, n)) { h->hit = 1; return 1; }
-    return 0;
+    for (int i = 0; i < c->n; i++) { app(buf, cap, c->cls[i]); app(buf, cap, " "); }
 }
 
 /* human tag list for the log line */
@@ -215,19 +243,18 @@ static int bf_allow(const uint8_t *veh, const uint8_t *unit, int seat)
 {
     if (!cfg_enabled || !veh || !unit) return 1;
     if (!(unit[0x30] & cfg_humanbit)) return 1;
-    const uint8_t *vdef = def_of(veh);
-    if (!vdef) return 1;
-    req_t r; r.pre = cfg_pre; r.plen = strlen(cfg_pre); r.n = r.dropped = 0;
-    if (!each_tag_vec(vdef + cfg_propoff, collect_req, &r)) return 1;
-    if (r.n == 0) return 1;                                     /* no crew_only_ prop: unrestricted */
-    has_t h = { &r, 0 };
-    if (!each_tag_vec(unit + cfg_tagoff, match_req, &h)) return 1;
-    if (h.hit) return 1;
-    const uint8_t *udef = def_of(unit);
-    if (udef) {
-        if (!each_tag_vec(udef + cfg_propoff, match_req, &h)) return 1;
-        if (h.hit) return 1;
+    cls_t vc, uc; vc.n = vc.dropped = uc.n = uc.dropped = 0;
+    scan_t vs = { cfg_vpre, strlen(cfg_vpre), cfg_noboard[0] ? cfg_noboard : NULL, strlen(cfg_noboard), &vc, 0 };
+    if (!each_tag_vec(veh + cfg_tagoff, scan_tags, &vs)) return 1;
+    const cls_t *vset = &vc;
+    if (!vs.noboard && vc.n == 0) {
+        if (g_defboard.n == 0) return 1;                        /* no board_ tag, empty DefaultBoard: anyone */
+        vset = &g_defboard;
     }
+    scan_t us = { cfg_upre, strlen(cfg_upre), NULL, 0, &uc, 0 };
+    if (!each_tag_vec(unit + cfg_tagoff, scan_tags, &us)) return 1;
+    const cls_t *uset = uc.n ? &uc : &g_defclass;
+    if (!vs.noboard && cls_meet(vset, uset)) return 1;
 
     /* refused */
     int popup = 0;
@@ -240,14 +267,16 @@ static int bf_allow(const uint8_t *veh, const uint8_t *unit, int seat)
             logf_("order retry: unit %p -> vehicle %p refused %u times in a row (AI retry loop?)", (void *)unit, (void *)veh, repeats + 1);
     } else if (cfg_log && g_lines < 400) {
         g_lines++;
-        char vl[256] = "", ul[256] = "";
-        for (int i = 0; i < r.n; i++) { app(vl, sizeof vl, r.cls[i]); app(vl, sizeof vl, " "); }
+        char vl[256] = "", ucl[256] = "", ul[256] = "";
+        if (vs.noboard) app(vl, sizeof vl, "no_board ");
+        else { cls_names(vset, vl, sizeof vl); if (vset == &g_defboard) app(vl, sizeof vl, "(default) "); }
+        cls_names(uset, ucl, sizeof ucl);
+        if (uset == &g_defclass) app(ucl, sizeof ucl, "(default) ");
         names_t w = { ul, sizeof ul };
         each_tag_vec(unit + cfg_tagoff, name_app, &w);
-        if (udef) { app(ul, sizeof ul, "| props "); each_tag_vec(udef + cfg_propoff, name_app, &w); }
-        logf_("%s: unit %p [%s] -> vehicle %p [crew_only: %s%s] refused (orders %u, seats %u)",
-              seat ? "seat" : "order", (void *)unit, ul, (void *)veh, vl, r.dropped ? "+more ignored " : "",
-              st_deny_order, st_deny_seat);
+        logf_("%s: unit %p class [%s] tags [%s] -> vehicle %p board [%s%s] refused (orders %u, seats %u)",
+              seat ? "seat" : "order", (void *)unit, ucl, ul, (void *)veh, vl,
+              (vc.dropped || uc.dropped) ? "+more ignored " : "", st_deny_order, st_deny_seat);
     }
     ReleaseSRWLockExclusive(&g_lock);
     if (popup) fire_refused(veh);   /* outside the lock: script handlers may re-enter */
@@ -433,7 +462,8 @@ static const char *find_all(uint8_t *base, sites_t *s)
     uint32_t end = *(uint32_t *)(t + 3), beg = *(uint32_t *)(t + 10);
     if (end != beg + 8 || beg < 0x100 || beg > 0x2000) return "unexpected tag vector offset";
     s->tagoff = beg;
-    if (!find_props(lo, hi, &s->defoff, &s->propoff, &s->prop_votes)) return "def props offsets not found";
+    /* 0.4 reads runtime tags only; the def props offsets are just logged (and used by the offline test's fakes) */
+    if (!find_props(lo, hi, &s->defoff, &s->propoff, &s->prop_votes)) { s->defoff = 0x548; s->propoff = 0x330; s->prop_votes = 0; }
     /* optional: popup event + clock (the filter works without them) */
     s->ev_err = find_event(base, lo, hi, s);
     s->clock = find_clock(lo, hi);
@@ -497,8 +527,15 @@ static void load_ini(void)
     cfg_enabled = ini_i(L"Enabled", 1, 0, 1);
     cfg_eject   = ini_i(L"EjectOccupants", 1, 0, 1);
     cfg_log     = ini_i(L"Log", 1, 0, 1);
-    ini_s(L"PropPrefix", "crew_only_", cfg_pre, sizeof cfg_pre);
-    if (!cfg_pre[0]) snprintf(cfg_pre, sizeof cfg_pre, "crew_only_");   /* an empty prefix would match every prop */
+    ini_s(L"VehiclePrefix", "board_", cfg_vpre, sizeof cfg_vpre);
+    if (!cfg_vpre[0]) snprintf(cfg_vpre, sizeof cfg_vpre, "board_");     /* an empty prefix would match every tag */
+    ini_s(L"UnitPrefix", "boarder_", cfg_upre, sizeof cfg_upre);
+    if (!cfg_upre[0]) snprintf(cfg_upre, sizeof cfg_upre, "boarder_");
+    ini_s(L"NoBoardTag", "no_board", cfg_noboard, sizeof cfg_noboard);  /* empty = no such tag */
+    ini_s(L"DefaultBoard", "mortal", cfg_defboard, sizeof cfg_defboard);
+    ini_s(L"DefaultClass", "mortal", cfg_defclass, sizeof cfg_defclass);
+    cls_from_list(&g_defboard, cfg_defboard);
+    cls_from_list(&g_defclass, cfg_defclass);
     ini_s(L"PopupEvent", "board_refused", cfg_event, sizeof cfg_event);
     cfg_popup_ms = (uint32_t)ini_i(L"PopupCooldownMs", 3000, 0, 600000);
 }
@@ -518,8 +555,10 @@ static void install(const char *exe_name)
 {
     uint8_t *base = (uint8_t *)GetModuleHandleW(NULL);
     sites_t s;
-    logf_("[GEM BoardFilter %s] %s | Enabled=%d PropPrefix=%s EjectOccupants=%d PopupEvent=%s PopupCooldownMs=%u Log=%d",
-          BF_VERSION, exe_name, cfg_enabled, cfg_pre, cfg_eject,
+    logf_("[GEM BoardFilter %s] %s | Enabled=%d VehiclePrefix=%s UnitPrefix=%s NoBoardTag=%s DefaultBoard=%s "
+          "DefaultClass=%s EjectOccupants=%d PopupEvent=%s PopupCooldownMs=%u Log=%d",
+          BF_VERSION, exe_name, cfg_enabled, cfg_vpre, cfg_upre, cfg_noboard[0] ? cfg_noboard : "(none)",
+          cfg_defboard[0] ? cfg_defboard : "(anyone)", cfg_defclass, cfg_eject,
           cfg_event[0] ? cfg_event : "(none)", cfg_popup_ms, cfg_log);
     if (!cfg_enabled) { logf_("[GEM BoardFilter] Enabled=0, nothing patched (vanilla boarding)"); return; }
     const char *err = find_all(base, &s);
@@ -625,7 +664,12 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID res)
 static uint8_t *map_image(const char *path)
 {
     HMODULE m = LoadLibraryExA(path, NULL, DONT_RESOLVE_DLL_REFERENCES);
-    if (!m) printf("%s: load failed %lu\n", path, GetLastError());
+    if (!m) { printf("%s: load failed %lu\n", path, GetLastError()); return NULL; }
+    /* the "after patch" check writes fake jumps into .text: make the whole image writable, as host_map.c does */
+    IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)((uint8_t *)m + ((IMAGE_DOS_HEADER *)m)->e_lfanew);
+    DWORD old;
+    if (!VirtualProtect(m, nt->OptionalHeader.SizeOfImage, PAGE_EXECUTE_READWRITE, &old))
+        printf("%s: VirtualProtect failed %lu\n", path, GetLastError());
     return (uint8_t *)m;
 }
 static uint8_t *exec_alloc(size_t n) { return (uint8_t *)VirtualAlloc(NULL, n, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE); }
@@ -711,9 +755,9 @@ static int stub_runs(const sites_t *s)
     build_stub(mem + 256, (void *)bf_allow_seat, s->b, B_JE, B_PATCH);
 
     static fake_t veh, sm, ig;
-    fake(&veh, 0, NULL, "crew_only_gretchin");                 /* no runtime tags: the core skips its tag scan */
-    fake(&sm, 1, "astartes", NULL);
-    fake(&ig, 1, "gretchin", NULL);
+    fake(&veh, 0, NULL, NULL);                                 /* no runtime tags: the core skips its tag scan; = board_mortal */
+    fake(&sm, 1, "boarder_astartes", NULL);
+    fake(&ig, 1, "guard", NULL);                               /* no boarder_ tag = mortal */
     memset(g_placer, 0, sizeof g_placer);
     memset(g_vtbl, 0, sizeof g_vtbl);
     g_vtbl[L.slot_vt / 8] = (void *)fake_slot;
@@ -761,6 +805,8 @@ int main(int argc, char **argv)
 {
     int bad = 0;
     cfg_log = 0;
+    cls_from_list(&g_defboard, cfg_defboard);
+    cls_from_list(&g_defclass, cfg_defclass);
     for (int i = 1; i < argc; i++) {
         uint8_t *base = map_image(argv[i]);
         if (!base) { bad = 1; continue; }
@@ -800,51 +846,75 @@ int main(int argc, char **argv)
             if (!ok) bad = 1;
         }
     }
-    static fake_t free_v, grot_v, both_v, tagged_v, case_v, long_v, empty_v, many_v;
-    static fake_t sm, csm, grot, guard, Astartes, prop_sm, nonhuman, bare, longu, nodef;
-    fake(&free_v, 0, "smoke", "tank|heavy");                          /* no crew_only_ prop -> anyone */
-    fake(&grot_v, 0, NULL, "tank|crew_only_gretchin");
-    fake(&both_v, 0, NULL, "crew_only_gretchin|crew_only_astartes");
-    fake(&tagged_v, 0, "crew_only_gretchin", NULL);                   /* runtime TAG on the vehicle: ignored */
-    fake(&case_v, 0, NULL, "crew_only_astartes");
-    fake(&long_v, 0, NULL, "crew_only_a_very_long_heap_allocated_tag_name");
-    fake(&empty_v, 0, NULL, "crew_only_");                            /* no argument: ignored -> unrestricted */
-    fake(&many_v, 0, NULL, "crew_only_a|crew_only_b|crew_only_c|crew_only_d|crew_only_e|crew_only_f|crew_only_gretchin");
-    fake(&sm, 1, "astartes|sm_tactical", NULL);
-    fake(&csm, 1, "astartes|chaos", NULL);
-    fake(&grot, 1, "gretchin", NULL);
-    fake(&guard, 1, "guard|crew", NULL);
-    fake(&Astartes, 1, "Astartes", NULL);                             /* exact match: not "astartes" */
-    fake(&prop_sm, 1, NULL, "astartes");                              /* the tag as a human def prop */
-    fake(&nonhuman, 0, "astartes", NULL);
+    static fake_t plain_v, mortal_v, sm_v, daemon_v, both_v, closed_v, prop_v, case_v, long_v, bare_v, many_v;
+    static fake_t sm, csm, scout, guard, Astartes, nonhuman, bare, longu, two, prop_sm;
+    fake(&plain_v, 0, "smoke", "tank|heavy");                         /* no board_ tag -> DefaultBoard = mortal */
+    fake(&mortal_v, 0, "board_mortal", NULL);
+    fake(&sm_v, 0, "board_astartes", NULL);
+    fake(&daemon_v, 0, "tank|board_daemon", NULL);
+    fake(&both_v, 0, "board_mortal|board_astartes", NULL);
+    fake(&closed_v, 0, "board_mortal|no_board", NULL);                /* no_board beats every board_ tag */
+    fake(&prop_v, 0, NULL, "board_astartes");                         /* def PROP only, no tag: = no board_ tag */
+    fake(&case_v, 0, "board_Astartes", NULL);
+    fake(&long_v, 0, "board_a_very_long_heap_allocated_class_name", NULL);
+    fake(&bare_v, 0, "board_", NULL);                                 /* bare prefix: no class -> default */
+    fake(&many_v, 0, "board_a|board_b|board_c|board_d|board_e|board_f|board_astartes", NULL);
+    fake(&sm, 1, "boarder_astartes|sm_tactical", NULL);
+    fake(&csm, 1, "boarder_astartes|chaos", NULL);
+    fake(&scout, 1, "sm_scout", NULL);                                /* no boarder_ tag -> mortal */
+    fake(&guard, 1, "faction_guard", NULL);
+    fake(&Astartes, 1, "boarder_Astartes", NULL);
+    fake(&nonhuman, 0, "boarder_astartes", NULL);
     fake(&bare, 1, NULL, NULL);
-    fake(&longu, 1, "a_very_long_heap_allocated_tag_name", NULL);
-    fake(&nodef, 1, "guard", NULL); *(uint8_t **)(nodef.ent + cfg_defoff) = NULL;
+    fake(&longu, 1, "boarder_a_very_long_heap_allocated_class_name", NULL);
+    fake(&two, 1, "boarder_astartes|boarder_mortal", NULL);
+    fake(&prop_sm, 1, NULL, "boarder_astartes");                      /* human def prop is not read: mortal */
     struct { fake_t *v, *u; int want; const char *what; } c[] = {
-        { &free_v, &sm, 1, "astartes -> vehicle without crew_only_" },
-        { &free_v, &bare, 1, "untagged -> vehicle without crew_only_" },
-        { &grot_v, &sm, 0, "astartes -> crew_only_gretchin" },
-        { &grot_v, &grot, 1, "gretchin -> crew_only_gretchin" },
-        { &grot_v, &guard, 0, "guard -> crew_only_gretchin" },
-        { &grot_v, &bare, 0, "untagged -> crew_only_gretchin" },
-        { &both_v, &sm, 1, "astartes -> gretchin+astartes" },
-        { &both_v, &csm, 1, "astartes(chaos) -> gretchin+astartes" },
-        { &both_v, &grot, 1, "gretchin -> gretchin+astartes" },
-        { &both_v, &guard, 0, "guard -> gretchin+astartes" },
-        { &tagged_v, &sm, 1, "crew_only_ as vehicle runtime tag is ignored" },
-        { &case_v, &Astartes, 0, "Astartes -> crew_only_astartes (case-sensitive)" },
-        { &case_v, &prop_sm, 1, "astartes as human def prop" },
-        { &long_v, &longu, 1, "heap-allocated tag names" },
-        { &empty_v, &guard, 1, "bare crew_only_ prop ignored" },
-        { &many_v, &grot, 1, "7th crew_only_ prop still honoured" },
-        { &grot_v, &nonhuman, 1, "non-human never filtered" },
-        { &grot_v, &nodef, 0, "human without def, tag not listed" },
+        { &plain_v, &guard, 1, "mortal -> untagged vehicle" },
+        { &plain_v, &bare, 1, "no tags at all -> untagged vehicle" },
+        { &plain_v, &sm, 0, "astartes -> untagged vehicle" },
+        { &plain_v, &scout, 1, "scout (mortal) -> untagged vehicle" },
+        { &mortal_v, &guard, 1, "mortal -> board_mortal" },
+        { &mortal_v, &csm, 0, "astartes(chaos) -> board_mortal" },
+        { &sm_v, &sm, 1, "astartes -> board_astartes" },
+        { &sm_v, &guard, 0, "mortal -> board_astartes" },
+        { &daemon_v, &guard, 0, "mortal -> board_daemon" },
+        { &daemon_v, &sm, 0, "astartes -> board_daemon" },
+        { &both_v, &sm, 1, "astartes -> mortal+astartes" },
+        { &both_v, &guard, 1, "mortal -> mortal+astartes" },
+        { &closed_v, &guard, 0, "mortal -> no_board" },
+        { &closed_v, &sm, 0, "astartes -> no_board" },
+        { &prop_v, &sm, 0, "board_ as vehicle def prop only is not read" },
+        { &prop_v, &guard, 1, "mortal -> vehicle with board_ prop only" },
+        { &case_v, &sm, 0, "astartes -> board_Astartes (case-sensitive)" },
+        { &sm_v, &Astartes, 0, "boarder_Astartes -> board_astartes (case-sensitive)" },
+        { &long_v, &longu, 1, "heap-allocated class names" },
+        { &bare_v, &guard, 1, "bare board_ tag ignored -> default" },
+        { &many_v, &sm, 1, "7th board_ tag still honoured" },
+        { &sm_v, &two, 1, "unit with two classes" },
+        { &mortal_v, &two, 1, "unit with two classes (2nd)" },
+        { &sm_v, &prop_sm, 0, "boarder_ as human def prop is not read" },
+        { &sm_v, &nonhuman, 1, "non-human never filtered" },
     };
     int fails = 0;
     cfg_log = 1; g_lines = 0;     /* builds every refusal log line (no log file in the test) */
     for (size_t i = 0; i < sizeof c / sizeof c[0]; i++) {
         int got = bf_allow(c[i].v->ent, c[i].u->ent, 0);
         if (got != c[i].want) { printf("  FAIL %s: got %d\n", c[i].what, got); fails++; }
+    }
+    /* ini defaults: empty DefaultBoard = untagged vehicles take anyone; DefaultClass list */
+    {
+        cls_from_list(&g_defboard, "");
+        int a = bf_allow(plain_v.ent, sm.ent, 0);
+        cls_from_list(&g_defboard, " mortal , astartes ");
+        int b = bf_allow(plain_v.ent, sm.ent, 0);
+        cls_from_list(&g_defboard, cfg_defboard);
+        cls_from_list(&g_defclass, "guardsman");
+        int d = bf_allow(mortal_v.ent, bare.ent, 0);
+        cls_from_list(&g_defclass, cfg_defclass);
+        int ok = a == 1 && b == 1 && d == 0;
+        printf("  ini defaults: empty DefaultBoard %d, list %d, DefaultClass %d -> %s\n", a, b, d, ok ? "OK" : "FAIL");
+        if (!ok) fails++;
     }
     printf("rules: %zu cases, %d failed\n", sizeof c / sizeof c[0], fails);
     /* popup throttle on a fake clock: first refusal fires, a retry 1 s later doesn't, 3 s later does */
