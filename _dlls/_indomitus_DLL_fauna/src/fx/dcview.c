@@ -58,28 +58,30 @@ static void dc_set_icon(uint8_t *pic, const char *path)
     g_setImage(pic + g_phCompOff, 0, str, 0);
     g_strDtor(str);
 }
-static void dc_set_text(uint8_t *t, const char *txt, char last[32])
+/* last == NULL: always written - the engine's Update rewrites that row itself every frame (the speed row), so a cached
+   "unchanged" would leave the engine's text showing */
+static void dc_set_text(uint8_t *t, const char *txt, char *last)
 {
-    if (!t || !strcmp(txt, last)) return;                      /* unchanged: no SetText (it re-lays the widget out) */
+    if (!t || (last && !strcmp(txt, last))) return;           /* unchanged: no SetText (it re-lays the widget out) */
     void **tvt = *(void ***)t;
     if (tvt != g_vtStaticText && tvt[TEXT_VT_SET] != g_vtStaticText[TEXT_VT_SET]) return;
-    strcpy(last, txt);
+    if (last) strcpy(last, txt);
     MsString s; ms_set(&s, txt); ((void (*)(void *, MsString *))tvt[TEXT_VT_SET])(t, &s);
 }
 static void dc_fauna_rows(uint8_t *view)
 {
     static uint8_t *lastView, *lastPic; static int iconState = -1;   /* -1 unknown, 0 engine icons, 1 health/no stamina, 2 health+stamina */
-    static char last1[32], last2[32];
+    static char last1[32];                                     /* row 1 (fuel) is only written by the engine for a fuel chassis */
     if (!view[g_vvRowsOff]) return;
     uint8_t *e = *(uint8_t **)(view + g_vvEntOff);
     uint8_t *row1 = view + g_vvText1Off, *row2 = row1 + VV_ROW_STRIDE;
     uint8_t *t1 = *(uint8_t **)row1, *t2 = *(uint8_t **)row2;
     uint8_t *p1 = *(uint8_t **)(row1 + VV_ROW_PIC), *p2 = *(uint8_t **)(row2 + VV_ROW_PIC), *pn2 = *(uint8_t **)(row2 + VV_ROW_PANEL);
-    if (view != lastView || p1 != lastPic) { lastView = view; lastPic = p1; iconState = -1; last1[0] = last2[0] = 0; }   /* rows rebuilt */
+    if (view != lastView || p1 != lastPic) { lastView = view; lastPic = p1; iconState = -1; last1[0] = 0; }   /* rows rebuilt */
     void *vit = e && is_fauna(e) ? entity_vitality(e) : NULL;
     if (!vit) {
         if (iconState > 0) { dc_set_icon(p1, g_dcFuelIcon); dc_set_icon(p2, g_dcSpeedIcon); if (pn2) dlg_show(pn2, 1); }
-        iconState = 0; last1[0] = last2[0] = 0;
+        iconState = 0; last1[0] = 0;
         return;
     }
     float max = g_getMaxHealth(vit), smax = g_stamMaxOff ? *(float *)((uint8_t *)vit + g_stamMaxOff) : 0.0f;
@@ -93,7 +95,7 @@ static void dc_fauna_rows(uint8_t *view)
     }
     char txt[32];
     if (max > 0.0f) { hp_text(txt, sizeof txt, g_getHealth(vit), max); dc_set_text(t1, txt, last1); }
-    if (want == 2) { hp_text(txt, sizeof txt, *(float *)((uint8_t *)vit + g_stamCurOff), smax); dc_set_text(t2, txt, last2); }
+    if (want == 2) { hp_text(txt, sizeof txt, *(float *)((uint8_t *)vit + g_stamCurOff), smax); dc_set_text(t2, txt, NULL); }   /* every Update: the engine just wrote the speed there */
 }
 static void fx_vehview_event(void *view, int code, void *a, void *b)
 {

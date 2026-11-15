@@ -1,0 +1,203 @@
+; Indomitus Launcher - text of the "engine features" page (the SHOW THE ENGINE FEATURES button).
+; Compiled into the exe as RCDATA 800. UTF-8.
+;
+; One [section] per payload DLL, named like the file in launcher\payload without ".dll".
+; The page only shows the sections whose DLL is in that launcher build, in the order written here,
+; under the group headings in the order the groups first appear here. A DLL of the build that has
+; no section is listed at the end by its file name, so add a section when you add a DLL.
+;
+;   name=      title of the card
+;   group=     heading the card goes under
+;   summary=   one sentence under the title
+;   - text     one feature per line (a line starting with "- ")
+; Text between `backticks` is shown as code. No HTML: everything is escaped.
+
+; ---------------------------------------------------------------- infantry and melee
+
+[gem_meleestance]
+name=MeleeStance
+group=Infantry and melee
+summary=Melee stance, charges and automatic weapon draw for infantry.
+- A soldier with the tag `melee_stance` (set by the melee toggle button) refuses his guns and fights hand to hand.
+- Units with the tag `has_melee_weapon` charge the enemies they see while their melee weapon is in hand.
+- AI melee infantry (breed tag `melee_infantry`) run in on enemy infantry from up to 80 m.
+- AI soldiers draw their melee weapon when enemy infantry comes within about 5 m and take the gun back afterwards. A player's own units only follow the toggle.
+- Soldiers in stance can attack vehicles with melee ammo that carries a vehicle melee tag.
+- Paired melee blows start from further away (45 world units instead of the vanilla 17 / 29 / 35).
+- Buttons with `{instant}` and `{apply_to_all}` (melee toggle, overcharge, jetpack) work on several selected units at once.
+- Downed units (tag `start_personage`) are ignored by the AI and are not charged.
+- Drawing the melee weapon cancels a reload in progress, except for heavy weapons.
+
+[gem_meleechase]
+name=MeleeChase
+group=Infantry and melee
+summary=Creatures and vehicles with melee weapons keep up with a moving target.
+- A vehicle-class unit with a melee-tagged weapon re-plans its approach about twice a second (five times a second when close) instead of driving to where the target stood when it started.
+- The approach aims ahead of a target that is running.
+- Units with both melee and ranged weapons choose by the def props `ai_prioritize_melee` / `ai_prioritize_ranged`.
+- In melee range only the melee weapon attacks.
+
+[gem_contactdamage]
+name=ContactDamage
+group=Infantry and melee
+summary=Melee hits can damage a vehicle's body.
+- In a vehicle's `{on contact}` handler, `{vehicle_health_damage_pierce}` with a tag like `melee_body_25` takes 25 hp off the `body` component, the way a piercing round does.
+- Without the DLL that script line crashes the game, because the vanilla action expects a bullet.
+
+[gem_itempen]
+name=ItemPierce
+group=Infantry and melee
+summary=A round that pierces worn armour carries on into the wearer.
+- For worn items with the tag `pierce_through` (the Space Marine helmets): a round that gets through the item's armour keeps flying and can hit the head under it. In vanilla it stops inside the item.
+
+[gem_noprone]
+name=NoProne
+group=Infantry and melee
+summary=Units that cannot lie down never go prone by AI decision.
+- Units whose breed or entity has the tag `cannot_lie` are never put prone by the AI.
+- Stance orders given by the player are not changed.
+
+[gem_squadfollow]
+name=SquadFollow
+group=Infantry and melee
+summary=Squad members follow a running leader smoothly.
+- Followers no longer get a new move order every few metres while the leader runs, so their run is not restarted over and over.
+- The thresholds are in `gem_squadfollow.ini` (`MinDrift`, `MinIntervalMs`, `ForceDrift`).
+
+; ---------------------------------------------------------------- creatures
+
+[gem_fauna]
+name=Fauna
+group=Creatures
+summary=Creature units (vehicle-class units with the def prop `fauna_main`) behave like infantry in squads and in the HUD.
+- Squads: a creature squad gets a leader, the members keep their formation slots and copy the leader's walk or run. Selecting the squad selects its leader. Humans and creatures can share a squad.
+- HUD: a health row and a stamina bar in the unit panel, health and stamina instead of fuel and speed in direct control, and an over-head icon picked by a def prop `icon_<name>`.
+- Bandages: double-clicking a bandage in a creature's inventory heals 15% of its health. AI creatures below 50% health use one by themselves.
+- Script events `start_healing` and `stop_healing` fire on a bandage heal, as for a soldier.
+- Sprint: the double-click run order and Shift in direct control make a creature sprint, limited by its stamina.
+- In direct control a creature runs into soldiers and crushes objects instead of stopping at their edge.
+- `{extender "vitality"}` works on any chassis without crashing the game.
+
+; ---------------------------------------------------------------- vehicles and weapons
+
+[gem_weaponscript]
+name=WeaponScript
+group=Vehicles and weapons
+summary=New weapon behaviours switched on by tags in the weapon and ammo files.
+- `converge` on a multi-barrel weapon: every barrel fires at the point the gun is aimed at. In vanilla the barrels fire parallel and never meet.
+- `bullets_per_shot_<N>`: one trigger pull fires N projectiles inside a cone (`bullet_spread_<deg>`).
+- Overcharge: while the firing unit has the tag `overcharge`, its weapon fires the ammo variant named `<ammo>.overcharge`.
+- `lock_on` on the weapon with `atgm` on its ammo: fire-and-forget missiles that keep tracking the target that was under the sight when they left.
+- `drift_<N>` on the weapon: its rounds veer off their line with a steady sideways pull.
+
+[gem_bombbay]
+name=BombBay
+group=Vehicles and weapons
+summary=Airstrike planes drop their own bombs from the bomb bay.
+- With an action like `{action "airstrike:marauder_bomb_1250ms_35m"}` the plane opens its doors and releases its loaded bombs one after another, so the stick lands centred on the clicked point. In vanilla the engine spawns one bomb at the click.
+- The release interval and the altitude are part of the action name.
+
+[gem_boardfilter]
+name=BoardFilter
+group=Vehicles and weapons
+summary=Tags decide who may crew or board a vehicle.
+- `board_<class>` on a vehicle lists the classes that may board it. `boarder_<class>` on a soldier is his class.
+- `no_board` on a vehicle lets nobody in.
+- Untagged vehicles and soldiers use the default class `mortal`.
+- A refused board order fires the script event `board_refused` on the vehicle, for an on-screen message.
+
+[gem_crewvoice]
+name=CrewVoice
+group=Vehicles and weapons
+summary=Voice lines for vehicles that have no crew (walkers, drones, daemon engines).
+- A crewless vehicle whose def has a prop starting with `voice_` speaks with that voice set on every engine talk moment (select, move, attack, kill).
+- A vehicle that has a crew keeps the crew's voice.
+
+[gem_teleport]
+name=Teleport
+group=Vehicles and weapons
+summary=A `{teleport}` instruction for action buttons: the jump pack.
+- A soldier given an action with `{teleport}` is locked, moved to the clicked ground point and released. The mod's animations and effects cover the flight.
+- `{spread M}` scatters the soldiers of a squad within M metres of the click.
+- The jump's script events also reach the players of a dedicated-server match.
+
+; ---------------------------------------------------------------- scripting
+
+[gem_scriptext]
+name=ScriptExt
+group=Scripting for mod makers
+summary=New conditions, actions and events for unit scripts.
+- Conditions: `{if "have_enemy"}` (the unit's sensor sees an enemy), `{if health 0.6}` (health at or below 60%), `{if player 4}`, `{if player ally}` / `neutral` / `enemy`, `{if team 2}`.
+- Talk conditions: `{seen enemy daemon 1}` counts seen units by prop or by tag.
+- `{health_damage_count 0.25 max_health}` deals damage as a share of maximum health. Negative values heal. `set_health` sets the health directly.
+- `{multiplier X}` inside `{health_damage_pierce}` or `{health_damage_blast}` makes the unit take X times that damage.
+- Events: `{on "move_order"}`, `{on "selection_of_units"}` and `{on "talk_<name>"}` for the engine's 26 hard-coded talk moments.
+
+[gem_breedtags]
+name=BreedTags
+group=Scripting for mod makers
+summary=A breed's `{tags}` become real unit tags.
+- The tags written in a breed file are on the unit as soon as the breed is applied, so `{if tagged "..."}` and trigger tag selectors see them.
+- `{on "breed_applied"}` fires on the unit after every breed application.
+- When a unit is given another breed, the old breed's tags are removed first.
+
+[gem_teamtags]
+name=TeamTags
+group=Scripting for mod makers
+summary=Every unit carries a tag for its owning player.
+- Units get the tag `team<N>` for player N (`team0` to `team17`) at spawn, purchase, call-in and capture.
+- The tag follows the unit when its owner changes.
+
+[gem_sensortags]
+name=SensorTags
+group=Scripting for mod makers
+summary=Tags that switch a unit's sight off or hide it from enemy targeting.
+- `sensor_off`: the unit sees nothing and spots nothing for its side until the tag is removed.
+- `no_target`: enemies do not shoot at the unit or walk up to it (used for drop pods until they land).
+
+[gem_usercontrol]
+name=UserControl
+group=Scripting for mod makers
+summary=A tag hands a unit to its player at once.
+- A unit tagged `user_control` is given to its player immediately and gets the tags `player` and `_user`. This replaces a mission trigger that looped every 1 to 3 seconds.
+
+; ---------------------------------------------------------------- interface
+
+[gem_conquestui]
+name=ConquestUI
+group=Interface
+summary=Dynamic campaign screens: unit preview, research tree zoom, portrait filter.
+- Selecting a unit in the research tree shows it in the inspector.
+- Ctrl + mouse wheel zooms the research tree.
+- A SHOW LOCKED / HIDE LOCKED button filters the unit portraits of the reinforcement, airstrike and emplacement panels.
+- Guards the game against a vanilla crash of the unit inspector in that screen.
+
+[gem_researchpath]
+name=ResearchPath
+group=Interface
+summary=The research tree shows what you still have to research.
+- Hovering a unit highlights it and every prerequisite you still need, with the lines between them.
+- The tooltip of a locked unit lists the missing units in the order to research them: `Requires: A, B, C`.
+
+[gem_costred]
+name=CostRed
+group=Interface
+summary=Multiplayer buy menu: a cost you cannot afford is always red.
+- In vanilla the price only turns red under the mouse. Now every unit you cannot afford shows its MP / CP cost in red.
+
+; ---------------------------------------------------------------- sound
+
+[gem_teamsound]
+name=TeamSound
+group=Sound
+summary=One script line plays a different sound for each player.
+- `@side` in a sound name becomes `ally`, `enemy` or `neutral` on each player's machine, depending on how that player relates to the unit's owner.
+- `@army` becomes the listener's own army, and `@who` becomes `enemy_<army>` for the owner's enemies.
+
+; ---------------------------------------------------------------- diagnostics
+
+[gem_sessiondump]
+name=SessionDump
+group=Diagnostics
+summary=A crash-analysis tool for the developers. Shipped switched off.
+- When enabled it writes a Windows dump file each time the game, editor or server closes, and Ctrl+Alt+F12 writes a snapshot during a match.

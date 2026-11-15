@@ -115,9 +115,10 @@ sealed launcher payload guarantees it).
 
 ## Build
 
-`build.bat` - zig cc, mingw-w64 target, unity build of `src/gem_teleport.c`. Uses `.\zig\zig.exe`, else
-`..\_indomitus_DLL_scriptext\zig\zig.exe`, else zig on PATH / `python -m ziglang`. Output `dist\gem_teleport.dll` +
-`gem_teleport.ini`; copy both into the launcher payload and rebuild the launcher.
+`build.bat` - zig cc, mingw-w64 target, unity build of `src/gem_teleport.c`. Uses `.\zig\zig.exe`, else the launcher's
+`..\..\zig\zig.exe`, else `..\_indomitus_DLL_scriptext\zig\zig.exe`, else zig on PATH / `python -m ziglang`. Output
+`dist\gem_teleport.dll` + `gem_teleport.ini`; `build.bat payload` also copies both into the launcher payload; then
+rebuild the launcher.
 
 Offline check (Linux/WSL, after a game update): `sh tests/run_offline_check.sh <game.exe> <editor.exe> <server.exe>`
 maps each exe and runs every finder twice (`TP_TEST` build: vanilla, then with the earlier DLLs' patches simulated),

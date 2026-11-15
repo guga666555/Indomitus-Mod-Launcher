@@ -8,7 +8,9 @@
 //   3. On Play / Editor: makes sure Steam is running and logged in, switches the required mods on in
 //      the game profile, starts the exe suspended, queues LoadLibraryW(dll) as an APC on its main
 //      thread ("early bird": runs during loader init, before the game's entry point), resumes it,
-//      verifies every DLL is in, then hides itself until the game exits.
+//      verifies every DLL is in, then hides itself until the game exits. While the game runs it
+//      watches for the multiplayer host server (call_to_arms_server.exe) the game starts and loads
+//      the same verified payload into it.
 //   4. When the game / editor exits, gathers that run's logs (launcher, game.log, every payload DLL
 //      log, the MP host server's DLL logs + log_ds game.log, new minidumps) into one file in
 //      %LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log (newest 20 kept).
@@ -129,6 +131,120 @@ static std::wstring LastErrorText(DWORD err = GetLastError())
     return s + code;
 }
 
+// ================================================================ files, folders, resources
+
+static std::string ReadFileA(const std::wstring& path)
+{
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) return "";
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+static bool WriteFileA(const std::wstring& path, const std::string& data)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD w = 0;
+    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &w, nullptr) && w == data.size();
+    CloseHandle(h);
+    return ok;
+}
+
+// Replaces a file without ever leaving it empty or half-written: write <path>.launcher-tmp, flush it to
+// disk, then swap it in with one rename. A crash or kill mid-way leaves either the old or the new file.
+static bool WriteFileAtomic(const std::wstring& path, const std::string& data)
+{
+    std::wstring tmp = path + L".launcher-tmp";
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD w = 0;
+    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &w, nullptr) && w == data.size() && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (ok) ok = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    if (!ok) DeleteFileW(tmp.c_str());
+    return ok;
+}
+
+// File names (dirs = true: folder names) in `dir` matching `pattern`, sorted case-insensitively.
+static std::vector<std::wstring> ListFiles(const std::wstring& dir, const wchar_t* pattern, bool dirs = false)
+{
+    std::vector<std::wstring> out;
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\" + pattern).c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return out;
+    do {
+        bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (isDir != dirs || !wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+        out.push_back(fd.cFileName);
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
+    return out;
+}
+
+// An RCDATA resource of this exe as bytes; empty when there is none.
+static std::string ResourceText(int id)
+{
+    HMODULE hi = GetModuleHandleW(nullptr);
+    HRSRC r = FindResourceW(hi, MAKEINTRESOURCEW(id), RT_RCDATA);
+    HGLOBAL g = r ? LoadResource(hi, r) : nullptr;
+    const char* p = g ? (const char*)LockResource(g) : nullptr;
+    DWORD size = r ? SizeofResource(hi, r) : 0;
+    return (p && size) ? std::string(p, size) : std::string();
+}
+
+// "key=value" lines (UTF-8, optional BOM); blank lines, [sections] and lines starting with ; or # are skipped.
+static std::vector<std::pair<std::wstring, std::wstring>> ParseKvText(std::string text)
+{
+    std::vector<std::pair<std::wstring, std::wstring>> out;
+    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text.erase(0, 3);
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t nl = text.find('\n', pos); if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos); pos = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        size_t f = line.find_first_not_of(" \t"); if (f == std::string::npos) continue;
+        line = line.substr(f);
+        if (line[0] == ';' || line[0] == '#' || line[0] == '[') continue;
+        size_t eq = line.find('='); if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+        size_t vf = v.find_first_not_of(" \t"); v = vf == std::string::npos ? "" : v.substr(vf);
+        out.push_back({ Widen(k), Widen(v) });
+    }
+    return out;
+}
+
+static std::wstring KnownFolder(int csidl)
+{
+    wchar_t p[MAX_PATH];
+    return SUCCEEDED(SHGetFolderPathW(nullptr, csidl, nullptr, SHGFP_TYPE_CURRENT, p)) ? std::wstring(p) : std::wstring();
+}
+
+// %LocalAppData%\Indomitus Launcher (created when missing): the extracted payload, the session logs and
+// the language choice live here. Empty when LocalAppData is not available.
+static std::wstring LauncherDataDir()
+{
+    std::wstring local = KnownFolder(CSIDL_LOCAL_APPDATA);
+    if (local.empty()) return L"";
+    std::wstring dir = local + L"\\Indomitus Launcher";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir;
+}
+
+// Where the game keeps its profiles and logs. Which of the two it is depends on the PC, and the other
+// one can hold a stale copy, so callers look in both and go by file times:
+//   Documents\my games\gates of hell
+//   %LocalAppData%\digitalmindsoft\gates of hell
+static std::vector<std::wstring> GameConfigRoots()
+{
+    std::vector<std::wstring> out;
+    std::wstring docs = KnownFolder(CSIDL_PERSONAL), local = KnownFolder(CSIDL_LOCAL_APPDATA);
+    if (!docs.empty())  out.push_back(docs + L"\\my games\\gates of hell");
+    if (!local.empty()) out.push_back(local + L"\\digitalmindsoft\\gates of hell");
+    return out;
+}
+
 // ================================================================ config
 
 struct Config {
@@ -148,6 +264,7 @@ struct Config {
     std::wstring hotkeys;                  // ini: hotkeys= ("name=VALUE;name=VALUE"): default keys added to the profile keys.set when missing
     bool         showModFolderButton = true; // ini: show_mod_folder_button=
     bool         showDisableModsButton = true; // ini: show_disable_mods_button=
+    bool         showFeaturesButton = true;  // ini: show_features_button=
     std::wstring version;                  // shown in the window (ini: version=)
     std::wstring buildLabel;               // e.g. "Dev Build" (ini: build_label=)
     std::wstring subtitle;                 // line under the title (ini: subtitle=)
@@ -177,43 +294,20 @@ static std::wstring LauncherDir()
 // in memory; there is no file next to the exe for users to edit. DEV builds may override with a
 // gem_launcher.ini placed next to the exe.
 enum { RES_SETTINGS_INI = 600 };
-static std::string ReadFileA(const std::wstring& path);
 static std::vector<std::pair<std::wstring, std::wstring>> g_settings;
 
-static void ParseIniText(const std::string& text)
-{
-    g_settings.clear();
-    size_t pos = 0;
-    while (pos <= text.size()) {
-        size_t nl = text.find('\n', pos); if (nl == std::string::npos) nl = text.size();
-        std::string line = text.substr(pos, nl - pos); pos = nl + 1;
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
-        size_t f = line.find_first_not_of(" \t"); if (f == std::string::npos) continue;
-        line = line.substr(f);
-        if (line[0] == ';' || line[0] == '#' || line[0] == '[') continue;
-        size_t eq = line.find('='); if (eq == std::string::npos) continue;
-        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
-        size_t vf = v.find_first_not_of(" \t"); v = vf == std::string::npos ? "" : v.substr(vf);
-        g_settings.push_back({ Widen(k), Widen(v) });
-    }
-}
 
 static bool LoadSettings(const std::wstring& dir)
 {
 #ifdef DEV_BUILD
     std::wstring ext = dir + L"\\gem_launcher.ini";
-    if (PathFileExistsW(ext.c_str())) { ParseIniText(ReadFileA(ext)); return true; }
+    if (PathFileExistsW(ext.c_str())) { g_settings = ParseKvText(ReadFileA(ext)); return true; }
 #else
     (void)dir;
 #endif
-    HMODULE hi = GetModuleHandleW(nullptr);
-    HRSRC r = FindResourceW(hi, MAKEINTRESOURCEW(RES_SETTINGS_INI), RT_RCDATA);
-    HGLOBAL g = r ? LoadResource(hi, r) : nullptr;
-    const char* p = g ? (const char*)LockResource(g) : nullptr;
-    DWORD size = r ? SizeofResource(hi, r) : 0;
-    if (!p || !size) return false;
-    ParseIniText(std::string(p, size));
+    std::string text = ResourceText(RES_SETTINGS_INI);
+    if (text.empty()) return false;
+    g_settings = ParseKvText(text);
     return true;
 }
 
@@ -253,44 +347,12 @@ static const int kLangCount = (int)(sizeof(kLangs) / sizeof(kLangs[0]));
 static std::vector<std::pair<std::wstring, std::wstring>> g_langEn, g_langCur;
 static int g_lang = 0;
 
-static std::vector<std::pair<std::wstring, std::wstring>> ParseKvText(std::string text)
-{
-    std::vector<std::pair<std::wstring, std::wstring>> out;
-    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text.erase(0, 3);
-    size_t pos = 0;
-    while (pos <= text.size()) {
-        size_t nl = text.find('\n', pos); if (nl == std::string::npos) nl = text.size();
-        std::string line = text.substr(pos, nl - pos); pos = nl + 1;
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
-        size_t f = line.find_first_not_of(" \t"); if (f == std::string::npos) continue;
-        line = line.substr(f);
-        if (line[0] == ';' || line[0] == '#' || line[0] == '[') continue;
-        size_t eq = line.find('='); if (eq == std::string::npos) continue;
-        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
-        size_t vf = v.find_first_not_of(" \t"); v = vf == std::string::npos ? "" : v.substr(vf);
-        out.push_back({ Widen(k), Widen(v) });
-    }
-    return out;
-}
 
-static std::string ResourceText(int id)
-{
-    HMODULE hi = GetModuleHandleW(nullptr);
-    HRSRC r = FindResourceW(hi, MAKEINTRESOURCEW(id), RT_RCDATA);
-    HGLOBAL g = r ? LoadResource(hi, r) : nullptr;
-    const char* p = g ? (const char*)LockResource(g) : nullptr;
-    DWORD size = r ? SizeofResource(hi, r) : 0;
-    return (p && size) ? std::string(p, size) : std::string();
-}
 
 static std::wstring LangFile()
 {
-    wchar_t local[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local))) return L"";
-    std::wstring root = std::wstring(local) + L"\\Indomitus Launcher";
-    CreateDirectoryW(root.c_str(), nullptr);
-    return root + L"\\language.txt";
+    std::wstring root = LauncherDataDir();
+    return root.empty() ? root : root + L"\\language.txt";
 }
 
 static int LangIndex(const std::wstring& code)
@@ -374,12 +436,6 @@ static std::vector<std::string> VdfValues(const std::string& text, const std::st
     return out;
 }
 
-static std::string ReadFileA(const std::wstring& path)
-{
-    std::ifstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) return "";
-    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-}
 
 static bool FindFileRecursive(const std::wstring& dir, const wchar_t* name, int depth, std::wstring& found)
 {
@@ -439,6 +495,14 @@ static std::wstring FindGameExe(const std::wstring& appid)
 
 enum { RES_PAYLOAD_MANIFEST = 500 };
 
+static std::string HexLower(const UCHAR* p, size_t n)
+{
+    static const char* hx = "0123456789abcdef";
+    std::string out;
+    for (size_t i = 0; i < n; ++i) { out += hx[p[i] >> 4]; out += hx[p[i] & 15]; }
+    return out;
+}
+
 static std::string Sha256Hex(const void* data, size_t len)
 {
     BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE h = nullptr;
@@ -446,10 +510,7 @@ static std::string Sha256Hex(const void* data, size_t len)
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return out;
     if (BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) >= 0) {
         UCHAR digest[32];
-        if (BCryptHashData(h, (PUCHAR)data, (ULONG)len, 0) >= 0 && BCryptFinishHash(h, digest, 32, 0) >= 0) {
-            static const char* hx = "0123456789abcdef";
-            for (UCHAR c : digest) { out += hx[c >> 4]; out += hx[c & 15]; }
-        }
+        if (BCryptHashData(h, (PUCHAR)data, (ULONG)len, 0) >= 0 && BCryptFinishHash(h, digest, 32, 0) >= 0) out = HexLower(digest, 32);
         BCryptDestroyHash(h);
     }
     BCryptCloseAlgorithmProvider(alg, 0);
@@ -464,14 +525,7 @@ static std::vector<PayloadEntry> ReadPayloadManifest()
 {
     std::vector<PayloadEntry> out;
     g_manifestBad = 0;
-    HMODULE hi = GetModuleHandleW(nullptr);
-    HRSRC r = FindResourceW(hi, MAKEINTRESOURCEW(RES_PAYLOAD_MANIFEST), RT_RCDATA);
-    if (!r) return out;
-    HGLOBAL g = LoadResource(hi, r);
-    const char* p = g ? (const char*)LockResource(g) : nullptr;
-    DWORD size = SizeofResource(hi, r);
-    if (!p || !size) return out;
-    std::string text(p, size);
+    std::string text = ResourceText(RES_PAYLOAD_MANIFEST);
     size_t pos = 0;
     while (pos < text.size()) {
         size_t nl = text.find('\n', pos); if (nl == std::string::npos) nl = text.size();
@@ -492,19 +546,42 @@ static std::vector<PayloadEntry> ReadPayloadManifest()
     return out;
 }
 
-static bool WriteFileA(const std::wstring& path, const std::string& data);
+static std::vector<PayloadEntry> g_payload;   // the embedded files, as listed in the manifest (set by ExtractPayload)
+
+// Writes every embedded payload file into `dir` and checks what is on disk against its manifest hash.
+// keepSame = false: every file is rewritten, so edits to extracted inis / dlls never survive a launch.
+// keepSame = true: a file that is already there with the right hash is left alone (a running process
+// may have it loaded). `dlls` gets the .dll paths in manifest order. False with `err` on the first problem.
+static bool WritePayloadFiles(const std::wstring& dir, bool keepSame, std::vector<std::wstring>& dlls, std::wstring& err)
+{
+    for (const auto& e : g_payload) {
+        std::string data = ResourceText(e.id);
+        if (data.empty()) { err = L"Embedded file missing: " + e.name; return false; }
+        if (Sha256Hex(data.data(), data.size()) != e.sha) { err = L"Embedded file is corrupt: " + e.name; return false; }
+        std::wstring dst = dir + L"\\" + e.name;
+        std::string have = keepSame ? ReadFileA(dst) : std::string();
+        if (!keepSame || Sha256Hex(have.data(), have.size()) != e.sha) {
+            if (!WriteFileA(dst, data)) { err = L"Could not write " + dst + L"\n(is the game still running?)"; return false; }
+            have = ReadFileA(dst);
+            if (Sha256Hex(have.data(), have.size()) != e.sha) { err = L"Verification failed for " + dst; return false; }
+        }
+        size_t dot = e.name.rfind(L'.');
+        if (dot != std::wstring::npos && _wcsicmp(e.name.c_str() + dot, L".dll") == 0) dlls.push_back(dst);
+    }
+    return true;
+}
 
 // Returns false (after Fail) when the payload is missing or corrupt. Fills cfg.dlls/payloadDir/fingerprint.
 static bool ExtractPayload(Config& cfg)
 {
-    std::vector<PayloadEntry> entries = ReadPayloadManifest();
+    g_payload = ReadPayloadManifest();
 #ifndef DEV_BUILD
     if (g_manifestBad) {
         Fail(1, L"The launcher's embedded file list is damaged (%d bad entr%ls).\nRebuild the launcher.", g_manifestBad, g_manifestBad == 1 ? L"y" : L"ies");
         return false;
     }
 #endif
-    if (entries.empty()) {
+    if (g_payload.empty()) {
 #ifdef DEV_BUILD
         Log(L"dev build: no embedded payload");
         cfg.fingerprint = L"dev";
@@ -515,35 +592,16 @@ static bool ExtractPayload(Config& cfg)
 #endif
     }
     std::string all;
-    for (const auto& e : entries) all += e.sha;
-    std::string fp = Sha256Hex(all.data(), all.size()).substr(0, 8);
-    cfg.fingerprint = Widen(fp);
+    for (const auto& e : g_payload) all += e.sha;
+    cfg.fingerprint = Widen(Sha256Hex(all.data(), all.size()).substr(0, 8));
 
-    wchar_t local[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local))) { Fail(1, L"LocalAppData not available."); return false; }
-    std::wstring root = std::wstring(local) + L"\\Indomitus Launcher";
+    std::wstring root = LauncherDataDir(), err;
+    if (root.empty()) { Fail(1, L"LocalAppData not available."); return false; }
     cfg.payloadDir = root + L"\\payload\\" + cfg.fingerprint;
-    CreateDirectoryW(root.c_str(), nullptr);
     CreateDirectoryW((root + L"\\payload").c_str(), nullptr);
     CreateDirectoryW(cfg.payloadDir.c_str(), nullptr);
-
-    HMODULE hi = GetModuleHandleW(nullptr);
-    for (const auto& e : entries) {
-        HRSRC r = FindResourceW(hi, MAKEINTRESOURCEW(e.id), RT_RCDATA);
-        HGLOBAL g = r ? LoadResource(hi, r) : nullptr;
-        const char* p = g ? (const char*)LockResource(g) : nullptr;
-        DWORD size = r ? SizeofResource(hi, r) : 0;
-        if (!p || !size) { Fail(1, L"Embedded file missing: %ls", e.name.c_str()); return false; }
-        if (Sha256Hex(p, size) != e.sha) { Fail(1, L"Embedded file is corrupt: %ls", e.name.c_str()); return false; }
-        std::wstring dst = cfg.payloadDir + L"\\" + e.name;
-        // always rewrite, so edits to extracted inis/dlls never survive a launch
-        if (!WriteFileA(dst, std::string(p, size))) { Fail(1, L"Could not write %ls\n(is the game still running?)", dst.c_str()); return false; }
-        std::string back = ReadFileA(dst);
-        if (Sha256Hex(back.data(), back.size()) != e.sha) { Fail(1, L"Verification failed for %ls", dst.c_str()); return false; }
-        size_t dot = e.name.rfind(L'.');
-        if (dot != std::wstring::npos && _wcsicmp(e.name.c_str() + dot, L".dll") == 0) cfg.dlls.push_back(dst);
-        Log(L"payload: %ls  %hs", e.name.c_str(), e.sha.substr(0, 12).c_str());
-    }
+    if (!WritePayloadFiles(cfg.payloadDir, false, cfg.dlls, err)) { Fail(1, L"%ls", err.c_str()); return false; }
+    for (const auto& e : g_payload) Log(L"payload: %ls  %hs", e.name.c_str(), e.sha.substr(0, 12).c_str());
     Log(L"payload fingerprint %ls, %u dll(s) in %ls", cfg.fingerprint.c_str(), (unsigned)cfg.dlls.size(), cfg.payloadDir.c_str());
     return true;
 }
@@ -552,17 +610,7 @@ static bool ExtractPayload(Config& cfg)
 static void CollectDevDlls(Config& cfg)
 {
     if (cfg.dllDir.empty() || !PathIsDirectoryW(cfg.dllDir.c_str())) return;
-    std::vector<std::wstring> extra;
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((cfg.dllDir + L"\\*.dll").c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) extra.push_back(cfg.dllDir + L"\\" + fd.cFileName); } while (FindNextFileW(h, &fd));
-        FindClose(h);
-    }
-    for (size_t i = 1; i < extra.size(); ++i)
-        for (size_t j = i; j > 0 && _wcsicmp(PathFindFileNameW(extra[j].c_str()), PathFindFileNameW(extra[j - 1].c_str())) < 0; --j)
-            std::swap(extra[j], extra[j - 1]);
-    for (const auto& e : extra) cfg.dlls.push_back(e);
+    for (const auto& f : ListFiles(cfg.dllDir, L"*.dll")) cfg.dlls.push_back(cfg.dllDir + L"\\" + f);   // alphabetical, after the payload
 }
 #endif
 
@@ -579,20 +627,14 @@ static std::wstring DllNames(const std::vector<std::wstring>& dlls)
 //   {mods
 //       "folder_name:0"
 //   }
-// This makes sure the configured mods are in that list before the game starts.
-// The game keeps <profiles> in one of two places, depending on the PC:
-//   Documents\my games\gates of hell\profiles
-//   %LocalAppData%\digitalmindsoft\gates of hell\profiles
-// Both are searched; the most recently written options.set wins (= the profile the game uses now).
+// This makes sure the marked mods are in that list before the game starts. <profiles> is the
+// profiles\ folder of the game's config root (GameConfigRoots: two possible places); both are
+// searched and the most recently written options.set wins (= the profile the game uses now).
 
 static std::vector<std::wstring> ProfilesDirs()
 {
-    std::vector<std::wstring> out;
-    wchar_t p[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, p)))
-        out.push_back(std::wstring(p) + L"\\my games\\gates of hell\\profiles");
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, p)))
-        out.push_back(std::wstring(p) + L"\\digitalmindsoft\\gates of hell\\profiles");
+    std::vector<std::wstring> out = GameConfigRoots();
+    for (auto& d : out) d += L"\\profiles";
     return out;
 }
 
@@ -627,30 +669,7 @@ static std::wstring FindOptionsSet(const Config& cfg)
     return best;
 }
 
-static bool WriteFileA(const std::wstring& path, const std::string& data)
-{
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD w = 0;
-    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &w, nullptr) && w == data.size();
-    CloseHandle(h);
-    return ok;
-}
 
-// Replaces a file without ever leaving it empty or half-written: write <path>.tmp, flush it to disk,
-// then swap it in with one rename. A crash or kill mid-way leaves either the old or the new file.
-static bool WriteFileAtomic(const std::wstring& path, const std::string& data)
-{
-    std::wstring tmp = path + L".launcher-tmp";
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD w = 0;
-    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &w, nullptr) && w == data.size() && FlushFileBuffers(h);
-    CloseHandle(h);
-    if (ok) ok = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
-    if (!ok) DeleteFileW(tmp.c_str());
-    return ok;
-}
 
 // One-time copy of the profile as it was before the launcher first touched it. Required: no backup, no edit.
 static bool EnsureProfileBackup(const std::wstring& opt, const std::string& text, std::wstring& err)
@@ -740,19 +759,70 @@ static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, con
     std::wstring root = DirOf(DirOf(DirOf(gameExe)));                       // binaries\x64\exe -> game root
     ScanMarkedMods(root + L"\\mods", L"", m, out);
     ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, out);   // <library>\steamapps\...
-    for (size_t i = 1; i < out.size(); ++i)
-        for (size_t j = i; j > 0 && _wcsicmp(out[j].c_str(), out[j - 1].c_str()) < 0; --j) std::swap(out[j], out[j - 1]);
-    for (size_t i = 1; i < out.size(); )
-        if (_wcsicmp(out[i].c_str(), out[i - 1].c_str()) == 0) out.erase(out.begin() + i); else ++i;
+    std::sort(out.begin(), out.end());                                       // the entries are lower case already
+    out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+// The {mods ...} block of an options.set: where it is and its quoted entries ("name" or "name:n").
+struct ModsBlock {
+    size_t start = std::string::npos, end = std::string::npos;   // [start, end) in the text; npos = there is no block
+    std::vector<std::string> entries;
+};
+
+// False only for a block that opens and never closes.
+static bool FindModsBlock(const std::string& text, ModsBlock& b)
+{
+    size_t pos = 0;
+    while ((pos = text.find("{mods", pos)) != std::string::npos) {
+        char after = pos + 5 < text.size() ? text[pos + 5] : ' ';
+        if (after == '\r' || after == '\n' || after == ' ' || after == '\t' || after == '}') { b.start = pos; break; }
+        pos += 5;
+    }
+    if (b.start == std::string::npos) return true;
+    int depth = 0;
+    for (size_t i = b.start; i < text.size(); ++i) {
+        if (text[i] == '{') ++depth;
+        else if (text[i] == '}' && --depth == 0) { b.end = i + 1; break; }
+    }
+    if (b.end == std::string::npos) return false;
+    for (size_t q = text.find('"', b.start); q != std::string::npos && q < b.end; q = text.find('"', q + 1)) {
+        size_t q2 = text.find('"', q + 1);
+        if (q2 == std::string::npos || q2 > b.end) break;
+        b.entries.push_back(text.substr(q + 1, q2 - q - 1));
+        q = q2;
+    }
+    return true;
+}
+
+// The text with its {mods} block replaced by one that lists `entries`; without a block, the new one goes
+// before the file's last closing brace. Empty when there is no such brace (not an options.set).
+static std::string WithModsBlock(const std::string& text, const ModsBlock& b, const std::vector<std::string>& entries)
+{
+    std::string block = "\t{mods\r\n";
+    for (const auto& e : entries) block += "\t\t\"" + e + "\"\r\n";
+    block += "\t}";
+    if (b.start != std::string::npos)
+        return text.substr(0, b.start - (b.start > 0 && text[b.start - 1] == '\t' ? 1 : 0)) + block + text.substr(b.end);
+    size_t last = text.rfind('}');
+    return last == std::string::npos ? std::string() : text.substr(0, last) + block + "\r\n" + text.substr(last);
+}
+
+// Is profile entry `e` ("name" or "name:n") one of `mods`?
+static bool IsModEntry(const std::string& e, const std::vector<std::string>& mods, const std::string** which = nullptr)
+{
+    std::string name = e.substr(0, e.find(':'));
+    for (const auto& m : mods) if (_stricmp(name.c_str(), m.c_str()) == 0) { if (which) *which = &m; return true; }
+    return false;
 }
 
 // Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
 static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 {
     // Scan again now: mod.info files may have changed since the launcher opened.
-    const std::vector<std::wstring> mods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);
-    if (mods.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
+    std::vector<std::string> wanted;
+    for (const auto& m : FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker)) wanted.push_back(Utf8(m));
+    if (wanted.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) {
         // Fresh install: the game creates its profile on the first start. Don't block that start.
@@ -765,64 +835,23 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
     }
     std::string text = ReadFileA(opt);
     if (text.empty()) { err = L"could not read " + opt; return false; }
-
-    size_t start = std::string::npos, pos = 0;
-    while ((pos = text.find("{mods", pos)) != std::string::npos) {
-        char after = pos + 5 < text.size() ? text[pos + 5] : ' ';
-        if (after == '\r' || after == '\n' || after == ' ' || after == '\t' || after == '}') { start = pos; break; }
-        pos += 5;
-    }
-    std::vector<std::string> entries;
-    size_t end = std::string::npos;
-    if (start != std::string::npos) {
-        int depth = 0;
-        for (size_t i = start; i < text.size(); ++i) {
-            if (text[i] == '{') ++depth;
-            else if (text[i] == '}' && --depth == 0) { end = i + 1; break; }
-        }
-        if (end == std::string::npos) { err = L"unbalanced {mods} block in " + opt; return false; }
-        for (size_t q = text.find('"', start); q != std::string::npos && q < end; q = text.find('"', q + 1)) {
-            size_t q2 = text.find('"', q + 1);
-            if (q2 == std::string::npos || q2 > end) break;
-            entries.push_back(text.substr(q + 1, q2 - q - 1));
-            q = q2;
-        }
-    }
-
-    auto nameOf = [](const std::string& e) { size_t c = e.find(':'); return c == std::string::npos ? e : e.substr(0, c); };
-    auto same = [](const std::string& a, const std::string& b) { return _stricmp(a.c_str(), b.c_str()) == 0; };
-
-    std::vector<std::string> wanted;
-    for (const auto& m : mods) wanted.push_back(Utf8(m));
+    ModsBlock blk;
+    if (!FindModsBlock(text, blk)) { err = L"unbalanced {mods} block in " + opt; return false; }
 
     // Other mods keep their places (unless exclusive); the marked ones follow, in alphabetical order. An existing
     // entry keeps its ":n" suffix.
     std::vector<std::string> result;
     if (!cfg.modsExclusive)
-        for (const auto& e : entries) {
-            bool marked = false;
-            for (const auto& w : wanted) if (same(nameOf(e), w)) { marked = true; break; }
-            if (!marked) result.push_back(e);
-        }
+        for (const auto& e : blk.entries) if (!IsModEntry(e, wanted)) result.push_back(e);
     for (const auto& w : wanted) {
         std::string keep = w + ":0";
-        for (const auto& e : entries) if (same(nameOf(e), w)) { keep = e; break; }
+        for (const auto& e : blk.entries) if (IsModEntry(e, { w })) { keep = e; break; }
         result.push_back(keep);
     }
-    if (result == entries) { Log(L"profile mods already as required (%ls)", opt.c_str()); return true; }
+    if (result == blk.entries) { Log(L"profile mods already as required (%ls)", opt.c_str()); return true; }
 
-    std::string block = "\t{mods\r\n";
-    for (const auto& e : result) block += "\t\t\"" + e + "\"\r\n";
-    block += "\t}";
-
-    std::string out;
-    if (start != std::string::npos) out = text.substr(0, start - (start > 0 && text[start - 1] == '\t' ? 1 : 0)) + block + text.substr(end);
-    else {
-        size_t last = text.rfind('}');
-        if (last == std::string::npos) { err = L"unexpected options.set layout"; return false; }
-        out = text.substr(0, last) + block + "\r\n" + text.substr(last);
-    }
-
+    std::string out = WithModsBlock(text, blk, result);
+    if (out.empty()) { err = L"unexpected options.set layout"; return false; }
     if (!EnsureProfileBackup(opt, text, err)) return false;
     if (!WriteFileAtomic(opt, out)) { err = L"could not write " + opt; return false; }
     std::wstring list;
@@ -842,6 +871,9 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 //           {value "DOUBLE + KEY_J"}
 //       }
 //   }
+static const wchar_t* kDefaultHotkeys = L"actions/melee_toggle=SHIFT + KEY_C;actions/overcharge=SHIFT + KEY_O;actions/jetpack=DOUBLE + KEY_J;"
+                                        L"actions/sacrifice=SHIFT + KEY_K;actions/activate_drop=SHIFT + KEY_SPACE";   // when the ini has no hotkeys= line
+
 static void EnsureHotkeys(const Config& cfg)
 {
     if (cfg.hotkeys.empty()) return;
@@ -858,6 +890,7 @@ static void EnsureHotkeys(const Config& cfg)
         return;
     }
     const char* nl = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    const std::string hay = AsciiLower(text);
 
     std::string add; std::wstring added;
     const std::string list = Utf8(cfg.hotkeys);
@@ -874,9 +907,7 @@ static void EnsureHotkeys(const Config& cfg)
         };
         std::string name = trim(item.substr(0, eq)), value = trim(item.substr(eq + 1));
         if (name.empty() || value.empty() || name.find('"') != std::string::npos || value.find('"') != std::string::npos) continue;
-        // present already? the slot name in quotes, any case
-        std::string hay = AsciiLower(text), needle = "\"" + AsciiLower(name) + "\"";
-        if (hay.find(needle) != std::string::npos) continue;
+        if (hay.find("\"" + AsciiLower(name) + "\"") != std::string::npos) continue;   // present already: the slot name in quotes, any case
         bool quote = value.find(' ') != std::string::npos || value.find('+') != std::string::npos;
         add += std::string("\t{\"") + name + "\"" + nl + "\t\t{value " + (quote ? "\"" + value + "\"" : value) + "}" + nl + "\t}" + nl;
         if (!added.empty()) added += L", ";
@@ -894,52 +925,27 @@ static void EnsureHotkeys(const Config& cfg)
     Log(L"hotkeys added to %ls: %ls", keys.c_str(), added.c_str());
 }
 
-// Removes the configured mods from the profile list so a plain Steam start runs vanilla.
+// Removes the marked mods from the profile list so a plain Steam start runs vanilla.
 static bool DisableRequiredMods(const Config& cfg, std::wstring& err, int& removed)
 {
     removed = 0;
-    const std::vector<std::wstring> mods = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker);   // current mod.info files
+    std::vector<std::string> mods;                                    // from the mod.info files as they are now
+    for (const auto& m : FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker)) mods.push_back(Utf8(m));
     if (mods.empty()) return true;
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) { err = L"profile options.set not found in " + ProfilesDirsText(); return false; }
     std::string text = ReadFileA(opt);
     if (text.empty()) { err = L"could not read " + opt; return false; }
+    ModsBlock blk;
+    if (!FindModsBlock(text, blk)) { err = L"unbalanced {mods} block in " + opt; return false; }
+    if (blk.start == std::string::npos) return true;                  // no mods block at all = nothing enabled
 
-    size_t start = std::string::npos, pos = 0;
-    while ((pos = text.find("{mods", pos)) != std::string::npos) {
-        char after = pos + 5 < text.size() ? text[pos + 5] : ' ';
-        if (after == '\r' || after == '\n' || after == ' ' || after == '\t' || after == '}') { start = pos; break; }
-        pos += 5;
-    }
-    if (start == std::string::npos) return true;   // no mods block at all = nothing enabled
-    int depth = 0; size_t end = std::string::npos;
-    for (size_t i = start; i < text.size(); ++i) {
-        if (text[i] == '{') ++depth;
-        else if (text[i] == '}' && --depth == 0) { end = i + 1; break; }
-    }
-    if (end == std::string::npos) { err = L"unbalanced {mods} block"; return false; }
-
-    std::vector<std::string> entries, kept;
-    for (size_t q = text.find('"', start); q != std::string::npos && q < end; q = text.find('"', q + 1)) {
-        size_t q2 = text.find('"', q + 1);
-        if (q2 == std::string::npos || q2 > end) break;
-        entries.push_back(text.substr(q + 1, q2 - q - 1));
-        q = q2;
-    }
-    for (const auto& e : entries) {
-        std::string name = e.substr(0, e.find(':'));
-        bool drop = false;
-        for (const auto& m : mods) if (_stricmp(name.c_str(), Utf8(m).c_str()) == 0) { drop = true; break; }
-        if (drop) ++removed; else kept.push_back(e);
-    }
+    std::vector<std::string> kept;
+    for (const auto& e : blk.entries) if (IsModEntry(e, mods)) ++removed; else kept.push_back(e);
     if (removed == 0) return true;
 
-    std::string block = "\t{mods\r\n";
-    for (const auto& e : kept) block += "\t\t\"" + e + "\"\r\n";
-    block += "\t}";
-    std::string out = text.substr(0, start - (start > 0 && text[start - 1] == '\t' ? 1 : 0)) + block + text.substr(end);
     if (!EnsureProfileBackup(opt, text, err)) return false;
-    if (!WriteFileAtomic(opt, out)) { err = L"could not write " + opt; return false; }
+    if (!WriteFileAtomic(opt, WithModsBlock(text, blk, kept))) { err = L"could not write " + opt; return false; }
     Log(L"profile mods disabled: removed %d entr%ls from %ls", removed, removed == 1 ? L"y" : L"ies", opt.c_str());
     return true;
 }
@@ -1042,7 +1048,7 @@ static std::wstring BuildEnvironment(const std::wstring& appid)
 // When the game / editor exits (or is closed for a missing DLL), every log of that run goes into
 // one file: %LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log, newest 20 kept.
 // In order: this launcher's log, the game's game.log, each payload DLL's log, the MP host server's
-// DLL logs (ChildInject's <payload>\server*\) and its game.log (log_ds), then new minidumps.
+// DLL logs (<payload>\server\) and its game.log (log_ds), then new minidumps.
 // A file is taken when it was written during the run; in logs whose lines carry a
 // "[YYYY-MM-DD hh:mm:ss" stamp (append-mode logs) only lines from the run on are kept.
 
@@ -1060,12 +1066,6 @@ static const size_t kSessionFileCap = 8u << 20;   // per file; a bigger one keep
 
 static ULONGLONG FtU64(const FILETIME& f) { return ((ULONGLONG)f.dwHighDateTime << 32) | f.dwLowDateTime; }
 
-static std::wstring LocalAppDataDir()
-{
-    wchar_t p[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, p))) return L"";
-    return p;
-}
 
 static void SessionBegin(const std::wstring& exe, DWORD pid)
 {
@@ -1153,31 +1153,14 @@ static void SessionAddFile(std::string& out, std::vector<std::string>& index, co
     if (!out.empty() && out.back() != '\n') out += "\r\n";
 }
 
-// File names in `dir` matching `pattern`, sorted case-insensitively.
-static std::vector<std::wstring> ListFiles(const std::wstring& dir, const wchar_t* pattern, bool dirs = false)
-{
-    std::vector<std::wstring> out;
-    WIN32_FIND_DATAW fd;
-    HANDLE f = FindFirstFileW((dir + L"\\" + pattern).c_str(), &fd);
-    if (f == INVALID_HANDLE_VALUE) return out;
-    do {
-        bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        if (isDir != dirs || !wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
-        out.push_back(fd.cFileName);
-    } while (FindNextFileW(f, &fd));
-    FindClose(f);
-    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
-    return out;
-}
 
 static void WriteSessionLog(DWORD exitCode, const wchar_t* how)
 {
     if (!g_session.active) return;
     g_session.active = false;
-    std::wstring local = LocalAppDataDir();
-    if (local.empty()) return;
-    std::wstring dir = local + L"\\Indomitus Launcher\\logs";
-    CreateDirectoryW((local + L"\\Indomitus Launcher").c_str(), nullptr);
+    std::wstring data = LauncherDataDir();
+    if (data.empty()) return;
+    std::wstring dir = data + L"\\logs";
     CreateDirectoryW(dir.c_str(), nullptr);
     std::wstring exeName = PathFindFileNameW(g_session.exe.c_str());
     std::wstring stem = exeName;
@@ -1189,16 +1172,8 @@ static void WriteSessionLog(DWORD exitCode, const wchar_t* how)
     std::vector<std::string> index;
     bool havePayload = !g_cfg.payloadDir.empty();   // DEV builds have none
     SessionAddFile(body, index, L"launcher", g_dir + L"\\gem_launcher.log");
-    // the game config root is Documents\my games\gates of hell on some PCs and
-    // %LocalAppData%\digitalmindsoft\gates of hell on others (the other can hold a stale copy;
-    // SessionAddFile and the dump scan only take files written since the start, so search both)
-    std::vector<std::wstring> gameRoots;
-    {
-        wchar_t p[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, p)))
-            gameRoots.push_back(std::wstring(p) + L"\\my games\\gates of hell");
-        gameRoots.push_back(local + L"\\digitalmindsoft\\gates of hell");
-    }
+    // both possible config roots: SessionAddFile and the dump scan only take files written since the start
+    const std::vector<std::wstring> gameRoots = GameConfigRoots();
     for (const auto& gameLogs : gameRoots)
         SessionAddFile(body, index, L"game: game.log", gameLogs + L"\\log\\game.log");
     if (havePayload) for (const auto& f : ListFiles(g_cfg.payloadDir, L"*.log")) SessionAddFile(body, index, L"dll: " + f, g_cfg.payloadDir + L"\\" + f);
@@ -1254,6 +1229,192 @@ static void WriteSessionLog(DWORD exitCode, const wchar_t* how)
     for (size_t i = 0; i + kSessionKeep < old.size(); ++i) DeleteFileW((dir + L"\\" + old[i]).c_str());
 }
 
+// ---------------------------------------------------------------- MP host server
+// Hosting a multiplayer game makes the game start call_to_arms_server.exe, and that server runs the
+// simulation: without the payload it stops at script load on the first ScriptExt word. The launcher
+// carries the payload into it itself (no DLL inside the game does this):
+//   - the game is put in a job object with no limits; the job tells the launcher, through a
+//     completion port, the moment the game creates a child process
+//   - a child whose image is call_to_arms_server.exe in the game's own folder is frozen at once, gets
+//     its own SHA-256 checked copy of the payload from this exe's resources in <payload>\server\ (so
+//     the server's DLLs write their own logs), and the same LoadLibraryW APCs on its first thread as
+//     the game got. The notice arrives while the server is still being created or is in loader
+//     init, and APCs queued then run before its entry point.
+//   - every DLL is then checked; one that is missing after 3 s is loaded with a remote thread
+//     (late, but a server without the payload cannot run the mod at all) and logged as such.
+// Needs the launcher to stay open (not with --no-wait / wait_for_exit=0).
+
+struct ServerWatch {
+    HANDLE job = nullptr, port = nullptr, thread = nullptr;
+    std::wstring serverExe;     // full path the child must have
+    DWORD gamePid = 0;
+};
+static ServerWatch g_sw;
+static const ULONG_PTR kSwKeyJob = 1, kSwKeyStop = 2;
+
+// The server's own copy of the payload in <payload>\server\, straight from the embedded resources
+// (WritePayloadFiles, keeping files an earlier server may still have loaded). False = at least one
+// file could not be verified; nothing is injected then.
+static bool ExtractServerPayload(std::vector<std::wstring>& dlls)
+{
+    dlls.clear();
+    if (!g_payload.empty()) {
+        std::wstring dir = g_cfg.payloadDir + L"\\server", err;
+        CreateDirectoryW(dir.c_str(), nullptr);
+        if (!WritePayloadFiles(dir, true, dlls, err)) { Log(L"host server: %ls", err.c_str()); dlls.clear(); return false; }
+    }
+#ifdef DEV_BUILD
+    for (const auto& d : g_cfg.dlls) if (_wcsicmp(DirOf(d).c_str(), g_cfg.payloadDir.c_str()) != 0) dlls.push_back(d);   // dlls\*.dll: the same files
+#endif
+    return !dlls.empty();
+}
+
+// The oldest thread of `pid` (its main thread), opened for APCs and suspend / resume. The first
+// thread is inserted a moment after the process itself, so this retries for up to 2 s.
+static HANDLE OpenMainThread(DWORD pid)
+{
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        HANDLE best = nullptr;
+        ULONGLONG bestTime = ~0ull;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            THREADENTRY32 te{}; te.dwSize = sizeof(te);
+            if (Thread32First(snap, &te)) do {
+                if (te.th32OwnerProcessID != pid) continue;
+                HANDLE t = OpenThread(THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+                if (!t) continue;
+                FILETIME c{}, x{}, k{}, u{};
+                ULONGLONG when = GetThreadTimes(t, &c, &x, &k, &u) ? FtU64(c) : ~0ull - 1;
+                if (when < bestTime) { if (best) CloseHandle(best); best = t; bestTime = when; }
+                else CloseHandle(t);
+            } while (Thread32Next(snap, &te));
+            CloseHandle(snap);
+        }
+        if (best) return best;
+        Sleep(10);
+    }
+    return nullptr;
+}
+
+static void InjectHostServer(DWORD pid)
+{
+    HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ |
+                              PROCESS_CREATE_THREAD | PROCESS_SUSPEND_RESUME | SYNCHRONIZE, FALSE, pid);
+    if (!proc) return;                                         // gone already, or not ours to open
+    wchar_t image[MAX_PATH * 2] = L"";
+    DWORD len = MAX_PATH * 2;
+    if (!QueryFullProcessImageNameW(proc, 0, image, &len) || _wcsicmp(image, g_sw.serverExe.c_str()) != 0) { CloseHandle(proc); return; }
+
+    // freeze it before anything else: whatever it has reached so far, it goes no further
+    typedef LONG (NTAPI *NtSuspendResume)(HANDLE);
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    auto suspend = nt ? (NtSuspendResume)(void*)GetProcAddress(nt, "NtSuspendProcess") : nullptr;
+    auto resume  = nt ? (NtSuspendResume)(void*)GetProcAddress(nt, "NtResumeProcess") : nullptr;
+    bool frozen = suspend && resume && suspend(proc) >= 0;
+    Log(L"host server: pid %u started by the game%ls", pid, frozen ? L", frozen" : L" (could not freeze it)");
+
+    HANDLE thr = OpenMainThread(pid);
+    bool held = thr && SuspendThread(thr) != (DWORD)-1;        // covers a first thread inserted after the freeze
+    std::vector<std::wstring> dlls;
+    bool queued = false;
+    if (!thr) Log(L"host server: no thread found in pid %u", pid);
+    else if (!ExtractServerPayload(dlls)) Log(L"host server: payload not available - nothing injected");
+    else queued = InjectEarlyBird(proc, thr, dlls);
+    if (held) ResumeThread(thr);
+    if (frozen) resume(proc);
+    if (!queued) {
+        Log(L"!!!!! host server pid %u runs WITHOUT the payload - a hosted game will not work !!!!!", pid);
+        if (thr) CloseHandle(thr);
+        CloseHandle(proc);
+        return;
+    }
+
+    auto missingCount = [&]() { int n = 0; for (const auto& d : dlls) if (!IsModuleLoaded(proc, d)) ++n; return n; };
+    auto exited = [&]() { DWORD code = 0; return GetExitCodeProcess(proc, &code) && code != STILL_ACTIVE; };
+    int missing = (int)dlls.size();
+    for (int i = 0; i < 60 && missing && !exited(); ++i) { Sleep(50); missing = missingCount(); }
+    if (missing && !exited()) {
+        // the APCs came too late for loader init: load what is missing now, with the main thread held
+        // while that is possible (if it holds the loader lock the load cannot finish, so it is let go)
+        Log(L"host server: %d dll(s) not in after 3 s - loading them late", missing);
+        auto fn = LoadLibraryAddr();
+        for (const auto& d : dlls) {
+            if (!fn || IsModuleLoaded(proc, d)) continue;
+            LPVOID remote = WriteRemoteString(proc, d);
+            if (!remote) continue;
+            bool h = SuspendThread(thr) != (DWORD)-1;
+            HANDLE rt = CreateRemoteThread(proc, nullptr, 0, fn, remote, 0, nullptr);
+            if (rt && WaitForSingleObject(rt, 2000) == WAIT_TIMEOUT) {
+                if (h) { ResumeThread(thr); h = false; }
+                WaitForSingleObject(rt, 10000);
+            }
+            if (h) ResumeThread(thr);
+            if (rt) CloseHandle(rt); else Log(L"host server: CreateRemoteThread failed: %ls", LastErrorText().c_str());
+        }
+        missing = missingCount();
+    }
+    if (exited()) Log(L"host server: pid %u exited before every dll was checked", pid);
+    else if (missing) {
+        for (const auto& d : dlls) if (!IsModuleLoaded(proc, d)) Log(L"!!!!! host server: %ls did NOT load in pid %u !!!!!", PathFindFileNameW(d.c_str()), pid);
+    } else Log(L"host server: all %u dll(s) verified in pid %u", (unsigned)dlls.size(), pid);
+    CloseHandle(thr);
+    CloseHandle(proc);
+}
+
+static DWORD WINAPI ServerWatchThread(LPVOID)
+{
+    for (;;) {
+        DWORD msg = 0; ULONG_PTR key = 0; LPOVERLAPPED ov = nullptr;
+        if (!GetQueuedCompletionStatus(g_sw.port, &msg, &key, &ov, INFINITE)) break;
+        if (key == kSwKeyStop) break;
+        if (key != kSwKeyJob || msg != JOB_OBJECT_MSG_NEW_PROCESS) continue;
+        DWORD pid = (DWORD)(ULONG_PTR)ov;                      // job messages carry the pid here
+        if (pid && pid != g_sw.gamePid) InjectHostServer(pid);
+    }
+    return 0;
+}
+
+static void ServerWatchStop()
+{
+    if (g_sw.thread) {
+        PostQueuedCompletionStatus(g_sw.port, 0, kSwKeyStop, nullptr);
+        WaitForSingleObject(g_sw.thread, 20000);
+        CloseHandle(g_sw.thread);
+    }
+    if (g_sw.port) CloseHandle(g_sw.port);
+    if (g_sw.job) CloseHandle(g_sw.job);                       // no kill-on-close: closing it ends nothing
+    g_sw = ServerWatch();
+}
+
+// Called with the game still suspended. Never blocks the launch: on failure the log says a hosted
+// server will run without the payload.
+static void ServerWatchStart(HANDLE hGame, DWORD gamePid, const std::wstring& exeDir)
+{
+    ServerWatchStop();
+    if (!g_cfg.waitForExit) { Log(L"host server: the launcher does not stay open (no-wait), so a hosted server will NOT get the payload"); return; }
+    g_sw.gamePid = gamePid;
+    g_sw.serverExe = exeDir + L"\\call_to_arms_server.exe";
+    g_sw.job = CreateJobObjectW(nullptr, nullptr);
+    g_sw.port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;   // the only setting: nothing is limited
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT ap{ (PVOID)kSwKeyJob, g_sw.port };
+    bool ok = g_sw.job && g_sw.port
+           && SetInformationJobObject(g_sw.job, JobObjectExtendedLimitInformation, &li, sizeof(li))
+           && SetInformationJobObject(g_sw.job, JobObjectAssociateCompletionPortInformation, &ap, sizeof(ap))
+           && AssignProcessToJobObject(g_sw.job, hGame);
+    if (ok) {
+        g_sw.thread = CreateThread(nullptr, 0, ServerWatchThread, nullptr, 0, nullptr);
+        ok = g_sw.thread != nullptr;
+    }
+    if (!ok) {
+        Log(L"!!!!! host server: could not watch the game for its server (%ls) - a hosted server will NOT get the payload !!!!!", LastErrorText().c_str());
+        ServerWatchStop();
+        return;
+    }
+    Log(L"host server: watching pid %u for %ls", gamePid, g_sw.serverExe.c_str());
+}
+
 // Starts `exe` suspended, injects, resumes, verifies. On success returns 0 and hands back the
 // process handle (caller waits on it / closes it). On failure returns a non-zero code after
 // showing the error.
@@ -1293,10 +1454,12 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
         return Fail(2, L"Could not start %ls:\n%ls", PathFindFileNameW(exe.c_str()), LastErrorText().c_str());
     Log(L"pid %u created (suspended)", pi.dwProcessId);
     SessionBegin(exe, pi.dwProcessId);
+    ServerWatchStart(pi.hProcess, pi.dwProcessId, exeDir);
 
     if (!InjectEarlyBird(pi.hProcess, pi.hThread, dlls)) {
         TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        ServerWatchStop();
         int rc = Fail(3, L"Injection failed before the process started; it was closed.");
         WriteSessionLog(1, L"injection failed, the launcher closed the process");
         return rc;
@@ -1311,6 +1474,7 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
         DWORD code = 0;
         if (GetExitCodeProcess(pi.hProcess, &code) && code != STILL_ACTIVE) {
             CloseHandle(pi.hProcess);
+            ServerWatchStop();
             int rc = Fail(4, L"%ls exited right after start (code %u).\nIs Steam running?", PathFindFileNameW(exe.c_str()), code);
             WriteSessionLog(code, L"exited right after start");
             return rc;
@@ -1331,6 +1495,7 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 5000);
         CloseHandle(pi.hProcess);
+        ServerWatchStop();
         int rc = Fail(3, L"The Indomitus engine extension did not load (%ls), so the game was closed.\n\n"
                          L"Most often an antivirus blocked it - allow the launcher and the folder\n"
                          L"%%LocalAppData%%\\Indomitus Launcher, then try again.", missing.c_str());
@@ -1348,6 +1513,7 @@ static int WaitAndLogExit(HANDLE hProcess)
     GetExitCodeProcess(hProcess, &code);
     Log(L"process exited with code %u", code);
     CloseHandle(hProcess);
+    ServerWatchStop();
     WriteSessionLog(code, nullptr);
     return (int)code;
 }
@@ -1651,9 +1817,7 @@ static UpdateResult DownloadUpdate(const UpdateInfo& u, const std::wstring& dest
     else if (tooBig) { err = L"download is larger than the manifest says"; res = UPD_BAD_FILE; }
     else if (!ok) res = UPD_NET;
     else {
-        std::string hex;
-        static const char* hx = "0123456789abcdef";
-        if (hashed) for (UCHAR c : digest) { hex += hx[c >> 4]; hex += hx[c & 15]; }
+        std::string hex = hashed ? HexLower(digest, 32) : std::string();
         if (done != u.size || hex != u.sha) { err = L"downloaded file does not match the signed manifest (size or SHA-256)"; res = UPD_BAD_FILE; }
     }
     if (res != UPD_OK) DeleteFileW(dest.c_str());
@@ -1719,6 +1883,173 @@ static void CleanupAfterUpdate()
     if (t) CloseHandle(t); else delete arg;
 }
 
+// ================================================================ engine features page
+//
+// The SHOW THE ENGINE FEATURES button writes %LocalAppData%\Indomitus Launcher\features.html and opens it
+// in the default browser. The text is launcher\res\features.txt (RCDATA 800, one [section] per payload
+// DLL), the page frame launcher\res\features.html (RCDATA 801). Only the DLLs this launcher injects are
+// listed, so the page always describes the build that wrote it.
+
+enum { RES_FEATURES_TEXT = 800, RES_FEATURES_PAGE = 801 };
+
+struct FeatureDoc { std::string id, name, group, summary; std::vector<std::string> items; };
+
+// ---- text -> HTML (standard library only)
+
+static std::string LowerA(std::string s)
+{
+    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+    return s;
+}
+
+static std::string TrimA(const std::string& s)
+{
+    size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+    return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+// features.txt: "[dll name without .dll]", then name= / group= / summary= and one "- feature" per line.
+static std::vector<FeatureDoc> ParseFeatures(std::string text)
+{
+    std::vector<FeatureDoc> out;
+    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text.erase(0, 3);
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos); if (nl == std::string::npos) nl = text.size();
+        std::string line = TrimA(text.substr(pos, nl - pos)); pos = nl + 1;
+        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+        if (line[0] == '[') {
+            size_t e = line.find(']');
+            FeatureDoc d;
+            d.id = LowerA(TrimA(line.substr(1, (e == std::string::npos ? line.size() : e) - 1)));
+            out.push_back(d);
+            continue;
+        }
+        if (out.empty()) continue;
+        FeatureDoc& d = out.back();
+        if (line[0] == '-') { std::string t = TrimA(line.substr(1)); if (!t.empty()) d.items.push_back(t); continue; }
+        size_t eq = line.find('='); if (eq == std::string::npos) continue;
+        std::string k = LowerA(TrimA(line.substr(0, eq))), v = TrimA(line.substr(eq + 1));
+        if (k == "name") d.name = v; else if (k == "group") d.group = v; else if (k == "summary") d.summary = v;
+    }
+    return out;
+}
+
+// Plain text as HTML: everything escaped, `text between backticks` becomes <code>.
+static std::string HtmlText(const std::string& s)
+{
+    std::string out; bool code = false;
+    for (char c : s) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        case '`': out += code ? "</code>" : "<code>"; code = !code; break;
+        default:  out += c;
+        }
+    }
+    if (code) out += "</code>";
+    return out;
+}
+
+static std::string ReplaceAllA(std::string s, const std::string& from, const std::string& to)
+{
+    for (size_t p = 0; (p = s.find(from, p)) != std::string::npos; p += to.size()) s.replace(p, from.size(), to);
+    return s;
+}
+
+// The page for the DLLs in `stems` (lower-case file names without ".dll", injection order).
+static std::string BuildFeaturesHtml(const std::string& page, const std::vector<FeatureDoc>& docs, const std::vector<std::string>& stems,
+                                     const std::string& version, const std::string& build, const std::string& date)
+{
+    auto loaded = [&](const std::string& id) { return std::find(stems.begin(), stems.end(), id) != stems.end(); };
+    std::vector<std::string> groups;                    // in the order features.txt first names them
+    std::vector<const FeatureDoc*> shown;
+    for (const auto& d : docs) {
+        if (!loaded(d.id)) continue;
+        shown.push_back(&d);
+        if (std::find(groups.begin(), groups.end(), d.group) == groups.end()) groups.push_back(d.group);
+    }
+    FeatureDoc blank;                                   // a DLL of this build that features.txt does not describe
+    std::vector<FeatureDoc> undescribed;
+    for (const auto& s : stems) {
+        bool known = false;
+        for (const auto* d : shown) if (d->id == s) { known = true; break; }
+        if (known) continue;
+        blank.id = s; blank.name = s; blank.group = "Other extensions in this build";
+        blank.summary = "No description is included for this extension.";
+        undescribed.push_back(blank);
+    }
+    if (!undescribed.empty()) groups.push_back(undescribed[0].group);
+    for (const auto& d : undescribed) shown.push_back(&d);
+
+    std::string nav, body;
+    for (size_t g = 0; g < groups.size(); ++g) {
+        std::string cards; int n = 0;
+        for (const auto* d : shown) {
+            if (d->group != groups[g]) continue;
+            ++n;
+            cards += "<article class=\"card\" id=\"" + HtmlText(d->id) + "\"><header><h3>" + HtmlText(d->name.empty() ? d->id : d->name) +
+                     "</h3><span class=\"file\">" + HtmlText(d->id) + ".dll</span></header>";
+            if (!d->summary.empty()) cards += "<p class=\"sum\">" + HtmlText(d->summary) + "</p>";
+            if (!d->items.empty()) {
+                cards += "<ul>";
+                for (const auto& it : d->items) cards += "<li>" + HtmlText(it) + "</li>";
+                cards += "</ul>";
+            }
+            cards += "</article>\n";
+        }
+        std::string id = "g" + std::to_string(g + 1), title = HtmlText(groups[g].empty() ? std::string("Other") : groups[g]);
+        nav  += "<a href=\"#" + id + "\">" + title + "<span>" + std::to_string(n) + "</span></a>";
+        body += "<section class=\"group\" id=\"" + id + "\"><h2>" + title + "</h2><div class=\"cards\">\n" + cards + "</div></section>\n";
+    }
+    if (stems.empty()) body = "<p class=\"none\">This launcher build carries no engine extension.</p>";
+
+    std::string out = page;                             // the two long fields last: their text is not scanned again
+    out = ReplaceAllA(out, "{{VERSION}}", HtmlText(version.empty() ? std::string("-") : version));
+    out = ReplaceAllA(out, "{{BUILD}}",   HtmlText(build.empty() ? std::string("-") : build));
+    out = ReplaceAllA(out, "{{COUNT}}",   std::to_string(stems.size()));
+    out = ReplaceAllA(out, "{{DATE}}",    HtmlText(date));
+    out = ReplaceAllA(out, "{{NAV}}",     nav);
+    out = ReplaceAllA(out, "{{BODY}}",    body);
+    return out;
+}
+
+// ---- write and open
+
+static bool OpenFeaturesPage()
+{
+    std::vector<std::string> stems;
+    for (const auto& d : g_cfg.dlls) {
+        std::wstring n = PathFindFileNameW(d.c_str());
+        size_t dot = n.rfind(L'.');
+        if (dot != std::wstring::npos) n.erase(dot);
+        stems.push_back(LowerA(Utf8(n)));
+    }
+    std::string page = ResourceText(RES_FEATURES_PAGE);
+    if (page.empty()) { Log(L"features page: the page frame is not in this exe"); return false; }
+    SYSTEMTIME st; GetLocalTime(&st);
+    char date[32];
+    snprintf(date, sizeof date, "%04u-%02u-%02u", (unsigned)st.wYear, (unsigned)st.wMonth, (unsigned)st.wDay);
+    std::string html = BuildFeaturesHtml(page, ParseFeatures(ResourceText(RES_FEATURES_TEXT)), stems,
+                                         Utf8(g_cfg.version), Utf8(g_cfg.fingerprint), date);
+
+    std::wstring dir = LauncherDataDir();
+    if (dir.empty()) {                                  // no %LocalAppData%: the temp folder will do
+        wchar_t tmp[MAX_PATH];
+        DWORD n = GetTempPathW(MAX_PATH, tmp);
+        if (!n || n >= MAX_PATH) { Log(L"features page: no folder to write to"); return false; }
+        dir = tmp;
+        while (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+    }
+    std::wstring path = dir + L"\\features.html";
+    if (!WriteFileAtomic(path, html)) { Log(L"features page: could not write %ls: %ls", path.c_str(), LastErrorText().c_str()); return false; }
+    HINSTANCE r = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    Log(L"features page: %u extension(s) -> %ls (open: %d)", (unsigned)stems.size(), path.c_str(), (int)(INT_PTR)r);
+    return (INT_PTR)r > 32;
+}
+
 // ================================================================ GUI
 //
 // Installer-style front end: full-bleed blue-graded artwork (BITMAP resource 300), a big
@@ -1736,10 +2067,10 @@ enum { WM_LAUNCH_DONE = WM_APP + 1, WM_PROCESS_EXITED = WM_APP + 2, WM_SET_STATU
        WM_UPDATE_FOUND = WM_APP + 5, WM_UPDATE_PROGRESS = WM_APP + 6, WM_UPDATE_READY = WM_APP + 7,
        WM_UPDATE_CHECKED = WM_APP + 8 };   // wp: 0 = up to date, 1 = could not check
 enum { TIMER_TOAST = 1 };
-enum Action { ACT_GAME = 0, ACT_EDITOR, ACT_OPEN_MODS, ACT_DISABLE_MODS, ACT_QUIT, ACT_COUNT };
+enum Action { ACT_GAME = 0, ACT_EDITOR, ACT_OPEN_MODS, ACT_DISABLE_MODS, ACT_FEATURES, ACT_QUIT, ACT_COUNT };
 
 static const wchar_t* kTitle = L"INDOMITUS";
-static const wchar_t* kButtonKey[ACT_COUNT] = { L"btn_game", L"btn_editor", L"btn_mods", L"btn_disable_mods", L"btn_quit" };
+static const wchar_t* kButtonKey[ACT_COUNT] = { L"btn_game", L"btn_editor", L"btn_mods", L"btn_disable_mods", L"btn_features", L"btn_quit" };
 
 // Logical layout (96 dpi). Everything is scaled by g_dpi.
 static const int LW = 960, LH = 600;
@@ -2005,12 +2336,25 @@ static bool ButtonVisible(int i)
 {
     if (i == ACT_OPEN_MODS)    return g_cfg.showModFolderButton;
     if (i == ACT_DISABLE_MODS) return g_cfg.showDisableModsButton;   // the click scans mod.info files itself
+    if (i == ACT_FEATURES)     return g_cfg.showFeaturesButton;
     return true;
+}
+
+// Button height and gap (logical px). Five buttons fill the column at the designed size (42 + 12); with a
+// sixth they are made a little lower and closer, so the column still ends above the description panel.
+static void ButtonMetrics(int& h, int& gap)
+{
+    int n = 0;
+    for (int k = 0; k < ACT_COUNT; ++k) if (ButtonVisible(k)) ++n;
+    h = 42; gap = 12;
+    if (n > 5) { gap = 8; h = (5 * 42 + 4 * 12 - (n - 1) * gap) / n; }
 }
 
 static RECT ButtonRect(int i)
 {
-    int x = S(64), w = S(470), h = S(42), y0 = S(172), gap = S(12);
+    int lh, lgap;
+    ButtonMetrics(lh, lgap);
+    int x = S(64), w = S(470), h = S(lh), y0 = S(172), gap = S(lgap);
     int slot = 0;
     for (int k = 0; k < i; ++k) if (ButtonVisible(k)) ++slot;
     if (!ButtonVisible(i)) return RECT{ 0, 0, 0, 0 };
@@ -2020,7 +2364,7 @@ static RECT ButtonRect(int i)
 
 static bool ButtonEnabled(int i)
 {
-    if (g_busy && i != ACT_QUIT) return false;
+    if (g_busy && i != ACT_QUIT && i != ACT_FEATURES) return false;   // the features page is only a file and a browser tab
     switch (i) {
     case ACT_GAME:   return !g_cfg.dlls.empty() && !g_updateBlocked;
     case ACT_EDITOR: return !g_cfg.dlls.empty() && !g_updateBlocked && PathFileExistsW(g_cfg.editorExe.c_str());
@@ -2721,6 +3065,11 @@ static void DoAction(int i)
         else SetStatus(removed ? L"st_mods_disabled" : L"st_mods_already_off");
         break;
     }
+    case ACT_FEATURES: {
+        bool ok = OpenFeaturesPage();
+        if (!g_busy) SetStatus(ok ? L"st_features_opened" : L"st_features_failed", !ok);   // busy: the status line belongs to the launch / update
+        break;
+    }
     case ACT_QUIT:
         RequestClose();
         break;
@@ -3025,9 +3374,10 @@ static int RealMain(int argc, wchar_t** argv)
         cfg.modsMarker    = ReadIni(L"mods_marker", L"INDOMITUS MOD LAUNCHER");
         cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
         cfg.modsProfile   = ReadIni(L"mods_profile");
-        cfg.hotkeys       = ReadIni(L"hotkeys", L"actions/melee_toggle=SHIFT + KEY_C;actions/overcharge=SHIFT + KEY_O;actions/jetpack=DOUBLE + KEY_J;actions/sacrifice=SHIFT + KEY_K;actions/activate_drop=SHIFT + KEY_SPACE");
+        cfg.hotkeys       = ReadIni(L"hotkeys", kDefaultHotkeys);
         cfg.showModFolderButton = ReadIni(L"show_mod_folder_button", L"1") != L"0";
         cfg.showDisableModsButton = ReadIni(L"show_disable_mods_button", L"1") != L"0";
+        cfg.showFeaturesButton = ReadIni(L"show_features_button", L"1") != L"0";
         cfg.version    = ReadIni(L"version");
         cfg.buildLabel = ReadIni(L"build_label");
         cfg.subtitle   = ReadIni(L"subtitle", L"GEM engine extension launcher");
@@ -3129,7 +3479,7 @@ static int RealMain(int argc, wchar_t** argv)
     return rc;
 }
 
-// Standard GUI entry point (works with MSVC and mingw alike); hands the wide argv to RealMain.
+// GUI entry point; hands the wide argv to RealMain.
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     int argc = 0;

@@ -65,7 +65,7 @@ static void init(HMODULE self)
     g_defBandLong = ini_float("default_band_long", 28.0f);
     g_lift       = ini_int("lift", 1);
     g_aimEvents  = ini_int("aim_events", 1);
-    g_watchOn    = ini_int("watch", 1);
+    g_watchOn    = ini_int("watch", 0);
     g_netEvents  = ini_int("net_events", 1);
     ini_str("cooldown_tag", "tp_cooldown", g_cdTag, sizeof g_cdTag);         /* 0.2.10; empty = no cooldown check */
     { char h[32]; ini_str("ent_tags", "0x4E8", h, sizeof h); unsigned long v = strtoul(h, NULL, 0); if (v >= 0x100 && v < 0x4000 && !(v & 7)) g_entTagsOff = (uint32_t)v; }

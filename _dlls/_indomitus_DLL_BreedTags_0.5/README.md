@@ -94,7 +94,8 @@ every client in real multiplayer), or the simulations desync.
 
 ## Build
 
-`build.bat` (Windows: portable zig next to it, the ScriptExt project's zig, zig on PATH or `python -m ziglang`) ->
-`dist\gem_breedtags.dll`; for the Indomitus Launcher copy it + `gem_breedtags.ini` into `launcher\payload\`.
+`build.bat` (Windows: portable zig next to it, the launcher's or the ScriptExt project's zig, zig on PATH or
+`python -m ziglang`) -> `dist\gem_breedtags.dll`; `build.bat payload` also copies it + `gem_breedtags.ini` into
+`launcher\payload\`.
 `source/build.sh` - the same with `pip install ziglang`. `gcc -DBT_TEST`
 builds a Linux test harness that runs the address derivation against an exe without running it.

@@ -49,7 +49,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define FX_VERSION "0.10.0"
+#define FX_VERSION "0.12.0"
 #define FX_NAME    "GEM Fauna"
 #define FX_INI     L"\\gem_fauna.ini"
 #define FX_LOG     L"\\gem_fauna.log"
@@ -61,6 +61,7 @@
 #include "fx/squads.c"
 #include "fx/sprint.c"
 #include "fx/contact.c"
+#include "fx/dodge.c"
 #include "fx/follow.c"
 #include "fx/bandage.c"
 #include "fx/ui.c"

@@ -1,9 +1,13 @@
-# GEM ItemPierce 0.1
+# GEM ItemPierce 0.1.1
 
 Rounds that **pierce** an armoured volume of a worn item keep flying into the wearer.
 Built for Indomitus SM helmets. Call to Arms: Gates of Hell 1.067 (game, editor, server).
 
 Status: tested working in-house (Nov 4 2026, injected at runtime). Multiplayer not tested yet.
+
+0.1.1 (Nov 15 2026, source only - the dll in `launcher\payload\` is still the tested 0.1 until it is rebuilt):
+patch B left `rax` holding the tag check's result instead of the `volume+0x38` key when a tagged record was let
+through; it now reloads the key, so the engine code after the site sees the register it always had. Not run in game.
 
 ## Why
 

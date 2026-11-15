@@ -1,6 +1,6 @@
 @echo off
 rem Builds GEM NoProne with zig cc (clang + mingw-w64).
-rem   build.bat           -> out\gem_noprone.dll
+rem   build.bat           -> out\gem_noprone.dll + out\gem_noprone.ini (the settings file, copied from ..\)
 rem   build.bat payload   -> same, then copies gem_noprone.dll + gem_noprone.ini into launcher\payload\
 rem   build.bat test      -> out\np_test.exe   (np_test.exe ...\call_to_arms.exe must end with ALL FOUND)
 rem zig: the launcher's portable zig (..\..\..\zig\zig.exe), zig on PATH, or "python -m ziglang".
@@ -25,7 +25,8 @@ if /i "%1"=="test" (
 )
 %CC% -shared -o out\gem_noprone.dll gem_noprone.c -lkernel32 || goto :fail
 del out\gem_noprone.lib >nul 2>&1
-echo built out\gem_noprone.dll
+copy /y ..\gem_noprone.ini out\ >nul || goto :fail
+echo built out\gem_noprone.dll + out\gem_noprone.ini
 if /i "%1"=="payload" (
     copy /y out\gem_noprone.dll "%ROOT%\launcher\payload\" >nul || goto :fail
     copy /y ..\gem_noprone.ini "%ROOT%\launcher\payload\" >nul || goto :fail

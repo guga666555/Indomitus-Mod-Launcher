@@ -1,4 +1,4 @@
-# GEM Fauna 0.10.0
+# GEM Fauna 0.10.1
 
 Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
 carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
@@ -27,7 +27,9 @@ fails only turns its feature off (see `gem_fauna.log`).
 | direct-control HUD: health and stamina rows (human view icons) instead of fuel and speed for fauna | `fauna_dc_hud`, `dc_health_icon`, `dc_stamina_icon`, `dc_vehicle_icon_1/2` | local (game, editor) |
 | over-head marker (the shield) picked by a def prop: `{props "icon_<name>"}` -> `interface/scene/squad/icon_<name>_00/_01/_02` (no faction part) | `fauna_head_icon` | local (game, editor) |
 | stamina bar in the vehicle panel (`bar_stamina` / `txt_stamina` / `pnl_stamina`) for fauna with a vitality `{Stamina}` block | `fauna_stamina_bar`, `stamina_bar_name`, `stamina_text_name`, `stamina_panel_name` | local |
-| direct control (foot chassis): a fauna walks into soldiers (ram / run over) and objects (crush) instead of stopping at their edge like a soldier | `fauna_dc_contact`, `fauna_dc_crush_objects` | **simulation** |
+| direct control (foot chassis): a fauna walks into soldiers (ram / run over) and objects (crush) instead of stopping at their edge like a soldier; obstacles are tested with the fauna's own pather class (its obstacleID), not the soldier's | `fauna_dc_contact`, `fauna_dc_crush_objects`, `fauna_dc_pather` | **simulation** |
+| AI-controlled fauna do not contact (ram / crush / push) allied units - enemies and neutrals only | `fauna_ai_ally_contact`, `fauna_ai_ally_contact_vehicles` | **simulation** |
+| AI fauna get out of the way of bigger moving units (`{props "fauna_size<N>"}`), like soldiers dodge vehicles | `fauna_dodge*`, `fauna_size_prop` | **simulation** |
 | `{extender "vitality"}` (Health) on a wheel/track/human_carrier chassis no longer kills the game (any unit, not only fauna) | `vitality_any_chassis` | **simulation** |
 | diagnostics | `crash_log`, `ui_debug`, `fauna_sprint_debug` | - |
 
@@ -251,6 +253,24 @@ then walks into them and the engine's own contact handles the rest. Vehicles and
 buildings and terrain are still blocked by the pather test. If a fauna walks through something it should not, set
 `fauna_dc_crush_objects=0` (soldiers only) and send the log.
 
+0.11.0: the step first tests whether the target is blocked for a pather class, and only then pushes back. That class was
+the literal soldier class `human_tpc`, so a fauna was stopped by everything a soldier cannot cross (fences,
+hedgehogs...) even where its own obstacle class lets it through under AI. The class-by-name lookup in the step (the first
+call after the `human_tpc` load) is redirected to the fauna's own pather class: the entity byte (+0xDB4) the engine's
+own query builder reads (`movzx edx,byte [rdx+X]` before the query init). `fauna_dc_pather=human` keeps the engine's
+class, `off` skips the step (the fauna then moves exactly like under AI: terrain grid only, nothing pushes it back).
+The log names what a controlled fauna touches and what pushes it back (first 8 of each).
+
+## AI fauna and allies (0.11.0)
+
+The physics contact pair (`[pair]` = A, `[pair+8]` = B; one caller) already holds a friendly skip: for a soldier B and a
+non-manual actor A it calls the relation function R(A, B, 0) and returns when it gives 2 (same player, or allied in the
+diplomacy table). Fauna against fauna or vehicles are not covered. GEM Fauna wraps the pair call: when one side is a
+fauna not in direct control (chassis+0x18 == 0) and the other an actor not in direct control whose relation is 2, the
+pair is dropped - no ram, crush or push. R is found by its bytes (unique in all three exes); the pair function is the
+one holding two `xor r8d,r8d ... call R; cmp eax,2; je` sites. The relation is computed like R (players +0xDA8/+0xDAC,
+table and stride read from R). `fauna_ai_ally_contact_vehicles=1` keeps the contact with allied vehicles.
+
 ## Vitality on any chassis (0.7.0) - how it works
 
 The engine ties the vitality extender to the foot chassis: its timer update (health and stamina regeneration, host side)
@@ -272,7 +292,32 @@ icons only on a unit change), and the chassis speed wrappers (one cached per-def
 caches its answer per def (64-entry direct-mapped table). Orders, election, selection, bandages and the over-head icon
 run on player actions only. All debug logs are capped and off by default.
 
+## Dodging bigger units (0.12.0)
+
+Soldiers dodge vehicles through a crush scanner in the human FSM. The vehicle brain (which fauna run) has its own version:
+the root state's "crush" transition. Its condition (called right after the root update's "not in direct control" test,
+`and cl,3; cmp cl,1; je; mov rcx,rsi; call C` - unique) returns false for a unit with `{props "tank"}`, and otherwise
+walks the units its sensor sees: a unit with `{props "tank"}` (tag compare B) that is moving (velocity call V) and whose
+predicted path (crush/min_danger_zone_time / _length, the engine's danger-zone code) covers this unit makes it enter the
+"crush" state, which drives it to a random point aside. Vanilla vehicles therefore flee only from moving tanks.
+
+For a fauna, the condition's call is wrapped: while it runs, B answers yes for every unit and V answers "not moving" for
+a unit that is no threat, so the engine skips it and keeps its own moving test, danger zone and flee state for the rest.
+Threat = an actor, not a soldier, whose size is at least the fauna's size + `fauna_dodge_size_margin`. Size = N of the
+unit's `{props "fauna_size<N>"}` (1-9, cached per def), else `fauna_dodge_default_size` (fauna),
+`fauna_dodge_tank_size` (props "tank") or `fauna_dodge_vehicle_size`. Allies count only in direct control
+(`fauna_dodge_allies=0`), since AI allies no longer contact AI fauna (0.11.0). `{props "fauna_no_dodge"}` opts a fauna
+out. The fauna's FSM must have the vehicle "crush" transition (the vehicle FSM has it); the log says
+`dodge: fauna ... runs the vehicle crush check` the first time it is evaluated for a fauna.
+
 ## History
+- 0.12.0 - AI fauna get out of the way of bigger moving units (size props), through the vehicle AI's crush reaction
+  (`fauna_dodge*`).
+- 0.11.0 - direct control: the soldier collision step tests obstacles with the fauna's own pather class instead of
+  `human_tpc`, so a fauna passes what its obstacleID passes (`fauna_dc_pather`); log of what pushes a controlled fauna
+  back. AI-controlled fauna no longer contact allied units (`fauna_ai_ally_contact*`).
+- 0.10.1 - direct-control HUD: the stamina row showed the engine's speed text between stamina changes (the engine
+  rewrites that row every frame; GEM Fauna only wrote it on change since 0.6.3) - now written every frame, stamina only.
 - 0.10.0 - AI-controlled fauna use a bandage by themselves below 50% health (`fauna_auto_bandage*`); the interaction
   events `start_healing` / `stop_healing` are called on a fauna healed by a bandage (`fauna_healing_event_*`).
   Cleanup: one `calls_to` helper for call-site scans, `fauna_use_bandage` reports whether it used one.

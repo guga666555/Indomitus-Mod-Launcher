@@ -111,7 +111,7 @@ set CXX=%ZIGCMD% c++ -target x86_64-windows-gnu -O2 -std=c++17 -DUNICODE -D_UNIC
 set "OUT=Indomitus Launcher.exe"
 if "%MODE%"=="dev" set CXX=%CXX% -DDEV_BUILD
 if "%MODE%"=="dev" set "OUT=Indomitus Launcher DEV.exe"
-set LIBS=-lshlwapi -lpsapi -lshell32 -ladvapi32 -luser32 -lgdi32 -lmsimg32 -lcomctl32 -lwinmm -lbcrypt -lwinhttp -lkernel32
+set LIBS=-lshlwapi -lpsapi -lshell32 -ladvapi32 -luser32 -lgdi32 -lmsimg32 -lwinmm -lbcrypt -lwinhttp -lkernel32
 
 echo.
 echo [1/1] %OUT%
@@ -121,7 +121,6 @@ if exist "dist\%OUT%" del "dist\%OUT%"
 if errorlevel 1 goto :compile_failed
 
 del dist\*.lib >nul 2>&1
-if exist "dist\GEM Launcher.exe" del "dist\GEM Launcher.exe"
 if "%MODE%"=="" if exist dist\gem_launcher.ini del dist\gem_launcher.ini
 if "%MODE%"=="dev" copy /y launcher\settings.gen.ini dist\gem_launcher.ini >nul
 if "%MODE%"=="" call :release_files
@@ -181,7 +180,7 @@ goto :eof
 :no_payload
 echo.
 echo   *** launcher\payload\ is empty. A release build must carry the engine extension:
-echo       copy gem_breedtags.dll (the BreedTags dbghelp.dll, renamed) and gem_breedtags.ini there.
+echo       put the gem_*.dll files and their .ini files there (each DLL folder under _dlls\ builds one).
 echo       For a build that loads DLLs from dlls\ instead, run:   build_zig.bat dev
 echo no payload >> "%LOG%"
 goto :eof

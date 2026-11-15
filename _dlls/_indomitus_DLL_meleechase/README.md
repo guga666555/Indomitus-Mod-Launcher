@@ -1,4 +1,4 @@
-# GEM MeleeChase 0.5.0
+# GEM MeleeChase 0.5.3
 
 Better chasing for melee fauna and vehicles (vehicle-brain units) in Call to Arms - Gates of Hell 1.067: game, editor and dedicated server
 (`call_to_arms.exe`, `call_to_arms_ed.exe`, `call_to_arms_server.exe`). An Indomitus launcher payload DLL.
@@ -100,7 +100,7 @@ Put one prop in the unit's def (`{props "... ai_prioritize_melee"}`):
 
 ## Install
 1. `build.bat` builds `dist\gem_meleechase.dll` and copies the ini next to it.
-2. Copy `gem_meleechase.dll` and `gem_meleechase.ini` into `launcher\payload\`, then rebuild the launcher.
+2. `build.bat payload` also copies `gem_meleechase.dll` and `gem_meleechase.ini` into `launcher\payload\`; then rebuild the launcher.
 3. The log is `gem_meleechase.log`, next to the extracted DLL
    (`%LocalAppData%\Indomitus Launcher\payload\<code>\`).
 
@@ -121,6 +121,16 @@ Put one prop in the unit's def (`{props "... ai_prioritize_melee"}`):
 ## Multiplayer
 It changes AI decisions, so every player in a match needs the DLL. Decisions use only game state
 and game time (no wall clock, no randomness).
+
+**0.5.3 (Nov 15 2026, source only: the dll in `launcher\payload\` is 0.5.2 until it is rebuilt; not run in game).**
+The target-velocity table is keyed by the unit's memory address, which differs on every machine and every run. Up to
+0.5.2 a unit whose 16 slots were taken pushed another unit's sample out, even one still in use: that unit's target
+velocity restarted from 0 (no lead, no "target is backing off") at random, and differently on each machine (from
+about 500 units chasing at once in an offline replay of both versions on two address layouts; where the engine
+simulates the chase on every machine that is a desync). Now a sample is only taken over when it is older than 3 s
+of game time, which the code restarts anyway, so the velocities no longer depend on addresses at any unit count.
+Below that count 0.5.2 and 0.5.3 give identical results. Also: an ini value too long for its buffer is now cut, not left
+unterminated.
 
 ## Engine facts (1.067 game addresses; the finders derive them again on every start)
 

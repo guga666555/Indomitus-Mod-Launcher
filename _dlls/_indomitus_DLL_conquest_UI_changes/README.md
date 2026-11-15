@@ -81,7 +81,7 @@ mouse pointer in place. Dragging still pans the tree, as in vanilla.
 
 1. Run `build.bat`. It finds zig in `zig\`, in the launcher project (`..\..\zig\`), in the ScriptExt repo, on PATH, or
    as `python -m ziglang`. The output is `dist\gem_conquestui.dll` plus the ini.
-2. Copy `dist\gem_conquestui.dll` and `gem_conquestui.ini` into `..\..\launcher\payload\`, then rebuild the launcher.
+2. `build.bat payload` also copies `gem_conquestui.dll` and `gem_conquestui.ini` into `..\..\launcher\payload\`; then rebuild the launcher.
    The payload fingerprint changes automatically.
 3. Copy both files from `mod_side\` into `mods\Indomitus_002\resource\interface\layout\views\`. They have the
    vanilla names, so whenever the mod is enabled they replace the game's own layouts.

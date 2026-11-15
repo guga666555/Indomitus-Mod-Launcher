@@ -13,9 +13,18 @@ Every player in a multiplayer match needs the same launcher build (the code is s
    verifying every file against its SHA-256. Each DLL writes its own log into that folder.
 2. Checks GitHub for a newer launcher and offers it (see *Auto-update*).
 3. **Play** / **Editor**: makes sure Steam is running and logged in (starts it if needed), switches the
-   marked mods on in the game profile (see `mods_marker=`), starts the exe suspended, loads the DLLs, verifies they are
-   in, then hides until the game exits. If a DLL fails to load the game is closed instead of running
-   half-patched.
+   marked mods on in the game profile (see `mods_marker=`), adds the mod's ability hotkeys that are
+   missing from the profile's `keys.set` (see `hotkeys=`), starts the exe suspended, loads the DLLs,
+   verifies they are in, then hides until the game exits. If a DLL fails to load the game is closed
+   instead of running half-patched.
+4. While the game runs: when you host a multiplayer game the game starts `call_to_arms_server.exe`. The
+   launcher notices it (job object notification), writes a second verified copy of the payload to
+   `...\payload\<code>\server\` and loads the same DLLs into the server before it runs. This needs the
+   launcher to stay open, so it does not happen with `--no-wait`.
+5. When the game exits: gathers that run's logs (launcher, `game.log`, every DLL log, the host server's
+   logs, a list of new crash dumps) into one file,
+   `%LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log` (the newest 20 are kept).
+   It is the file to ask players for; it contains `game.log`, so paths with the Windows user name.
 
 `gem_launcher.log` next to the exe says what happened. Esc or the X closes the window;
 `Indomitus.exe --game` / `--editor` skip the window.
@@ -44,6 +53,39 @@ needs is in this repository:
 
 Generated on every build and not committed: `launcher\payload.rc`, `payload.manifest`, `fonts.rc`,
 `version.rc`, `settings.gen.ini`. `launcher\update_pubkey.h` is generated once and committed (public key only).
+
+### The extension DLLs
+
+Each DLL is built on its own and its `.dll` + `.ini` are committed in `launcher\payload\`, so the
+launcher builds without rebuilding them. To rebuild one, run `build.bat payload` in its folder (it
+compiles, then copies the two files into `launcher\payload\`), then `build_zig.bat`. The build
+scripts use the `zig\` folder that `build_zig.bat` downloads. (Fauna's `build.bat` has no `payload`
+step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by hand.)
+
+| Payload DLL | Folder under `_dlls\` | What it adds |
+|---|---|---|
+| `gem_boardfilter` | `_indomitus_DLL_boarder` | who may crew / board a vehicle, by `board_` / `boarder_` tags |
+| `gem_bombbay` | `_indomitus_DLL_new_airstrike` | bomb-bay airstrikes |
+| `gem_breedtags` | `_indomitus_DLL_BreedTags_0.5` | breed tags become unit tags; `breed_applied` event |
+| `gem_conquestui` | `_indomitus_DLL_conquest_UI_changes` | dynamic campaign: unit preview, research tree zoom |
+| `gem_contactdamage` | `_indomitus_DLL_contactdamage` | melee contact damage to a vehicle's body |
+| `gem_costred` | `_indomitus_DLL_costred\src` | MP buy menu: cost in red when you cannot afford the unit |
+| `gem_crewvoice` | `_indomitus_DLL_crewvoice\src` | voice lines for vehicles without a crew |
+| `gem_fauna` | `_indomitus_DLL_fauna` | creature units behave like infantry squads |
+| `gem_itempen` | `_indomitus_DLL_itempierce` | rounds that pierce a worn item carry on into the wearer |
+| `gem_meleechase` | `_indomitus_DLL_meleechase` | fauna and vehicles chase melee targets |
+| `gem_meleestance` | `_indomitus_DLL_meleestance` | melee stance, charge and auto-draw |
+| `gem_noprone` | `_indomitus_DLL_gem_noprone\source` | `cannot_lie` units never go prone by AI decision |
+| `gem_researchpath` | `_indomitus_DLL_research_path` | research tree: path highlight and "Requires" tooltip |
+| `gem_scriptext` | `_indomitus_DLL_scriptext` | script conditions, damage options and events |
+| `gem_sensortags` | `_indomitus_DLL_sensortags` | `sensor_off` / `no_target` tags |
+| `gem_sessiondump` | `_indomitus_DLL_sessiondump` | diagnostic: a minidump at every exit (shipped switched off) |
+| `gem_squadfollow` | `_indomitus_DLL_squadfollow` | squad members follow without restarting their run |
+| `gem_teamsound` | `_indomitus_DLL_teamsound\src` | per-player sound variants (`@side`, `@army`, `@who`) |
+| `gem_teamtags` | `_indomitus_DLL_teamtags` | automatic `team<N>` tags by owning player |
+| `gem_teleport` | `_indomitus_DLL_teleport` | the `{teleport}` action (jetpacks) |
+| `gem_usercontrol` | `_indomitus_DLL_usercontrol\src` | `user_control` tagged units go to their player |
+| `gem_weaponscript` | `_indomitus_DLL_new_weaponscript` | convergence, overcharge, guided projectiles |
 
 ## Versioning
 
@@ -91,13 +133,16 @@ updates signed with the official key, so a fork can never update them.
 |---|---|
 | `mods_marker=` | words that mark a mod for the launcher (default `INDOMITUS MOD LAUNCHER`; case, brackets, underscores and hyphens are ignored, so `[INDOMITUS_MOD_LAUNCHER]` matches too): every local or Workshop mod with it in its `mod.info` `{desc "..."}` is switched on before launch, alphabetically by folder name |
 | `mods_exclusive=` | 1 = switch every other mod off |
+| `hotkeys=` | default keys for the mod's ability buttons, added to the profile's `keys.set` when the slot is missing there (`name=VALUE;name=VALUE`, a slot that exists is never changed; empty = off) |
 | `mods_profile=` | profile id to edit; empty = the most recently saved profile, searched in both `Documents\my games\gates of hell\profiles` and `%LocalAppData%\digitalmindsoft\gates of hell\profiles` (the game uses either, depending on the PC) |
 | `show_mod_folder_button=`, `show_disable_mods_button=` | hide the two developer buttons for end users |
+| `show_features_button=` | 0 = hide the "Show the engine features" button |
 | `require_steam=`, `steam_autostart=`, `steam_timeout_ms=` | the Steam check before launching |
 | `update_url=`, `update_exe_url=`, `update_min_version=` | auto-update |
 | `build_label=`, `subtitle=`, `title_font=`, `title_size=` | window text |
 | `exe=`, `editor_exe=`, `appid=`, `args=` | game location (empty = found through Steam) and extra game arguments |
 | `sound_hover=`, `sound_click=` | `embedded`, `none`, or a .wav path |
+| `wait_for_exit=` | 1 (default) = the launcher stays open, hidden, until the game exits: needed for the session log and for the host server |
 | `console=` | 1 = open a live log window |
 
 ## Icon and logo

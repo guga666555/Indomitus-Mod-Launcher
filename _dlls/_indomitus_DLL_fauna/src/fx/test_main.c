@@ -33,6 +33,9 @@ int main(int argc, char **argv)
     ok &= find_squad_select(); ok &= find_squad_elect(); ok &= find_squad_pace(); ok &= find_follow();
     ok &= find_fauna_sprint();
     ok &= find_contact();
+    printf("step pather class: %s\n", g_classSite ? "found" : "NOT found");
+    ok &= find_ally_filter();
+    ok &= find_dodge();
     printf("SetSelected: %s\n", g_setSelected ? "found" : "not found (optional)");
     printf("box create finder: %s\n", find_box_create() ? "found" : "NOT found");
     printf("--- bandage finders (simulation)\n");

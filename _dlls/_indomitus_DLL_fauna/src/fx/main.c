@@ -48,6 +48,22 @@ static void init(HMODULE self)
     g_wantDcView = ini_int("fauna_dc_hud", 1);
     g_wantContact = ini_int("fauna_dc_contact", 1);
     g_contactObjects = ini_int("fauna_dc_crush_objects", 1);
+    {
+        char v[16]; ini_str("fauna_dc_pather", "own", v, sizeof v);
+        for (char *c = v; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+        g_dcPather = !strcmp(v, "off") || !strcmp(v, "0") ? DCP_OFF : !strcmp(v, "human") ? DCP_HUMAN : DCP_OWN;
+    }
+    g_wantAllyContact = ini_int("fauna_ai_ally_contact", 0);
+    g_allyVehicles = ini_int("fauna_ai_ally_contact_vehicles", 0);
+    g_wantDodge = ini_int("fauna_dodge", 1);
+    g_dodgeMargin = ini_int("fauna_dodge_size_margin", 1);
+    if (g_dodgeMargin < 0) g_dodgeMargin = 0;
+    g_dodgeDefSize = ini_int("fauna_dodge_default_size", 2);
+    g_dodgeVehSize = ini_int("fauna_dodge_vehicle_size", 3);
+    g_dodgeTankSize = ini_int("fauna_dodge_tank_size", 4);
+    g_dodgeAllies = ini_int("fauna_dodge_allies", 0);
+    ini_str("fauna_dodge_never_prop", g_dodgeNeverProp, g_dodgeNeverProp, sizeof g_dodgeNeverProp);
+    ini_str("fauna_size_prop", g_sizePropPrefix, g_sizePropPrefix, sizeof g_sizePropPrefix);
     ini_str("dc_health_icon", g_dcHpIcon, g_dcHpIcon, sizeof g_dcHpIcon);
     ini_str("dc_stamina_icon", g_dcStIcon, g_dcStIcon, sizeof g_dcStIcon);
     ini_str("dc_vehicle_icon_1", g_dcFuelIcon, g_dcFuelIcon, sizeof g_dcFuelIcon);
@@ -108,8 +124,26 @@ static void init(HMODULE self)
     if (!g_wantContact) logf_("fauna direct-control contact   off (ini)");
     else {
         g_okContact = ((g_vtFoot && g_footManualOff) || find_fauna_sprint()) && find_contact() && install_contact();
-        logf_("fauna direct-control contact   %s", !g_okContact ? "OFF (engine code not recognised)"
-              : g_contactObjects ? "ON (walks into soldiers and objects: ram / crush)" : "ON (walks into soldiers: ram; objects push back - ini)");
+        logf_("fauna direct-control contact   %s%s", !g_okContact ? "OFF (engine code not recognised)"
+              : g_dcPather == DCP_OFF ? "ON (no soldier collision step: moves like under AI, terrain grid only)"
+              : g_contactObjects ? "ON (walks into soldiers and objects: ram / crush)" : "ON (walks into soldiers: ram; objects push back - ini)",
+              !g_okContact || g_dcPather == DCP_OFF ? "" : g_dcPather == DCP_OWN ? " - obstacles: the fauna's own pather class" : " - obstacles: soldier pather class (ini)");
+    }
+    /* simulation: an AI-controlled fauna does not contact (ram / crush / push) allied units */
+    if (g_wantAllyContact) logf_("fauna AI contact with allies   on (ini: engine behaviour)");
+    else {
+        g_okAlly = find_ally_filter() && install_ally_filter();
+        logf_("fauna AI contact with allies   %s", !g_okAlly ? "OFF (engine code not recognised - allies are still contacted)"
+              : g_allyVehicles ? "skipped (soldiers and fauna; allied vehicles still contacted - ini)" : "skipped (soldiers, fauna and vehicles)");
+    }
+    /* simulation: AI fauna get out of the way of bigger moving units (the vehicle brain's crush check, by size) */
+    if (!g_wantDodge) logf_("fauna dodge bigger units       off (ini)");
+    else {
+        g_okDodge = find_dodge() && install_dodge();
+        if (!g_okDodge) logf_("fauna dodge bigger units       OFF (engine code not recognised)");
+        else logf_("fauna dodge bigger units       ON (props \"%s1..%d\"; threat = size >= own + %d; no size prop: fauna %d, tank %d, vehicle %d; %s; never: props \"%s\")",
+                   g_sizePropPrefix, DODGE_SIZES, g_dodgeMargin, g_dodgeDefSize, g_dodgeTankSize, g_dodgeVehSize,
+                   g_dodgeAllies ? "allies too" : (g_okAlly ? "allies only in direct control" : "allies too (ally check unavailable)"), g_dodgeNeverProp);
     }
 
     g_okVit = find_vitality();

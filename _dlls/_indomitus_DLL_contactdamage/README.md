@@ -8,7 +8,7 @@ Vehicle component hp damage from contact handlers (melee contactors) for Call to
 
 takes 25 hp off the vehicle's `body` component the same way a piercing round does. It uses the engine's own subtract (hp first, then hp_broken), its break / destroy state changes with their script events, and in MP the host's damage command to the clients. The number comes from a `melee_body_<N>` tag on the vehicle (self), or on the effector if the vehicle has none. Decimals are allowed (`melee_body_12.5`).
 
-**Without the dll** that script line crashes a host or single-player game: vanilla `vehicle_health_damage_pierce` reads the bullet with no null check, and a contact has no bullet. Only use it where the dll is guaranteed (launcher payload, and `gem_aa_childinject` for hosted games).
+**Without the dll** that script line crashes a host or single-player game: vanilla `vehicle_health_damage_pierce` reads the bullet with no null check, and a contact has no bullet. Only use it where the dll is guaranteed (launcher payload; the launcher also loads it into the host server of a hosted game).
 
 ## Engine
 - Hooked: `Interaction::eVehicleHealthDamagePierce` vtable (RTTI) slot 9 `Apply(this, ctx, actor)` (game exe+0x745960, editor 0x5C11F0, server 0x55B990) and slot 10 `GetDamage` (0x745DF0 / 0x5C1670 / 0x55BE20). Blast and every other action are untouched.

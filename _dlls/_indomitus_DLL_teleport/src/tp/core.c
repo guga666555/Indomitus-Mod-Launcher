@@ -32,7 +32,8 @@ static void ini_str(const char *key, const char *def, char *out, size_t n)
     wchar_t ini[MAX_PATH]; wcscpy(ini, g_dir); wcscat(ini, FX_INI);
     wchar_t wkey[64], wdef[128], wout[256]; MultiByteToWideChar(CP_ACP, 0, key, -1, wkey, 64); MultiByteToWideChar(CP_ACP, 0, def, -1, wdef, 128);
     GetPrivateProfileStringW(FX_SECT, wkey, wdef, wout, 256, ini);
-    WideCharToMultiByte(CP_ACP, 0, wout, -1, out, (int)n, NULL, NULL);
+    if (!WideCharToMultiByte(CP_ACP, 0, wout, -1, out, (int)n, NULL, NULL))   /* too long for out: keep what fits */
+        out[n - 1] = 0;
 }
 
 static int ini_int(const char *key, int def)

@@ -20,7 +20,7 @@ It's UI only, so it doesn't touch the simulation and is safe in co-op campaigns.
 ## Install
 
 1. Run `build.bat`. It produces `dist\gem_researchpath.dll` and copies the ini next to it.
-2. Copy `dist\gem_researchpath.dll` and `gem_researchpath.ini` into `_indomitus_mod_launcher\launcher\payload\`, then
+2. `build.bat payload` also copies `gem_researchpath.dll` and `gem_researchpath.ini` into `launcher\payload\`; then
    rebuild the launcher.
 3. Mod side (already done in Indomitus_001):
    - `mod_side\progress_line_selected.tga` goes to `resource\interface\pages\main\dynamic_campaign\`.

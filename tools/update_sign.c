@@ -18,9 +18,6 @@
  *       Copies the settings for the build (version= is the one version source) and warns when version= is not
  *       higher than the newest git tag.
  *
- *   update_sign newer <a> <b>
- *       Exit code 0 when version a is higher than b (used by publish.bat).
- *
  *   update_sign versionrc <gem_launcher.ini> <out.rc>
  *       Writes the exe's Windows version info from version= (same number as the window and update.ini).
  *
@@ -561,8 +558,6 @@ static int cmd_versionrc(const char *iniPath, const char *out)
 
 int main(int argc, char **argv)
 {
-    /* update_sign newer <a> <b>: exit 0 when version a is higher than b (tags like v0.9.4 accepted), 1 otherwise */
-    if (argc == 4 && !strcmp(argv[1], "newer")) return ver_cmp(argv[2], argv[3]) > 0 ? 0 : 1;
     if (argc == 4 && !strcmp(argv[1], "versionrc")) return cmd_versionrc(argv[2], argv[3]);
     if (argc == 5 && !strcmp(argv[1], "stamp")) return cmd_stamp(argv[2], argv[3], argv[4]);
     if (argc == 3 && !strcmp(argv[1], "pubheader")) return cmd_pubheader(argv[2]);

@@ -54,7 +54,7 @@ The dll does nothing on the dedicated server (no sound there).
 
 ## Build / test
 
-`build.bat` → `out\gem_teamsound.dll`, `out\gem_inject.exe`. `build.bat test` → finder + logic test on the three exes. `inject.bat` loads the dll into a running game/editor (main menu, before loading a map) for in-house tests.
+`build.bat` → `out\gem_teamsound.dll`; `build.bat payload` also copies it and the ini into `launcher\payload\`. `build.bat test <binaries\x64 folder>` → finder + logic test on the three exes. `build.bat inject` → `out\gem_inject.exe`; `gem_inject.exe gem_teamsound.dll` (run in `out\`) loads the dll into a running game/editor (main menu, before loading a map) for in-house tests.
 
 ## Launcher integration
 

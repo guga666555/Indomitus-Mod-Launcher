@@ -1,4 +1,4 @@
-/* GEM ItemPierce 0.1 - rounds that pierce an armoured item carry on into the wearer
+/* GEM ItemPierce 0.1.1 - rounds that pierce an armoured item carry on into the wearer
  * Call to Arms: Gates of Hell (GEM 2, 1.067)
  *
  * Problem: a worn item (SM helmet) gets its volume re-enabled by script so its thickness
@@ -30,7 +30,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define IP_VERSION "0.1"
+#define IP_VERSION "0.1.1"   /* 0.1.1: patch B hands rax (the dedupe key) back on the tagged path too */
 
 /* ---------------------------------------------------------------- config */
 static int  cfg_enabled = 1;
@@ -180,8 +180,8 @@ __asm__(
     "  mov rsp, rbp\n"
     "  pop rbp\n"
     "  test eax, eax\n"
+    "  mov rax, [rcx+0x38]\n"          /* the key again (mov leaves the flags alone): the code at "go" finds rax as before */
     "  jnz 8f\n"
-    "  mov rax, [rcx+0x38]\n"
     "  cmp rax, r14\n"
     "  je 7f\n"
     "  mov r14, rax\n"

@@ -51,10 +51,11 @@ How this differs from the triggers:
 | `gem_usercontrol.log` | next to the dll (`_editor` / `_server` suffix); `Log=1` writes one line per handled unit |
 
 ## Install
-- Launcher: copy `gem_usercontrol.dll` + `gem_usercontrol.ini` into `launcher\payload\` and rebuild
-  (`_tools\launcher_build\build_local.py`). `gem_aa_childinject` copies the payload into `<payload>\server\`
-  and injects it into the dedicated server by itself.
-- In-house test: start the game or editor, stay in the main menu, run `inject.bat` (in `out\`).
+- Launcher: `build.bat payload` (copies `gem_usercontrol.dll` + `gem_usercontrol.ini` into `launcher\payload\`),
+  then `build_zig.bat` in the launcher folder. The launcher writes its own verified copy of the payload to
+  `<payload>\server\` and loads it into the host server when the game starts one.
+- In-house test: `build.bat inject` once, start the game or editor, stay in the main menu, then in `out\`:
+  `gem_inject.exe gem_usercontrol.dll`.
 
 ## Multiplayer
 Brain control and tags are simulation state. **Every machine in a multiplayer game and the dedicated server

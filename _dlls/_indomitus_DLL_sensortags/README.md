@@ -43,8 +43,8 @@ it as attackable, so the AI neither shoots at it nor walks up to it. Remove the 
 | `gem_sensortags.log` | written next to the dll (`_editor` / `_server` suffix for those exes) |
 
 ## Install
-- Launcher: copy `gem_sensortags.dll` + `gem_sensortags.ini` into `launcher\payload\` (and the
-  `server\` payload, for hosting).
+- Launcher: copy `gem_sensortags.dll` + `gem_sensortags.ini` into `launcher\payload\` (`build.bat payload`); the
+  launcher loads the same files into the host server of a hosted game.
 - In-house test: start the game or editor, stay in the main menu, run `inject.bat` (in `out\`).
   Then check `gem_sensortags.log` for the `installed` line. Set `Log=1` to see every switch.
 

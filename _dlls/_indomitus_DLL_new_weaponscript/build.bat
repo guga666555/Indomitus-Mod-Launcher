@@ -1,7 +1,7 @@
 @echo off
 rem Builds GEM WeaponScript (gem_weaponscript.dll: the converge / overcharge / guidance modules in one dll) for the
 rem Indomitus Launcher payload with zig cc (clang + mingw-w64, no Visual Studio).
-rem   build.bat           -> out\gem_weaponscript.dll
+rem   build.bat           -> out\gem_weaponscript.dll + out\gem_weaponscript.ini (the settings file, copied from gem_weaponscript\)
 rem   build.bat payload   -> same, then copies gem_weaponscript.dll + gem_weaponscript.ini into launcher\payload\
 rem                          (then run build_zig.bat in the launcher folder: the payload is sealed into the exe)
 rem   build.bat test      -> out\chain_test.exe   (run: out\chain_test.exe ...\binaries\x64\call_to_arms.exe, must end with ALL OK)
@@ -28,7 +28,8 @@ if /i "%1"=="test" (
 )
 %CC% -shared -o out\gem_weaponscript.dll gem_weaponscript\gem_weaponscript.c %MODULES% -lkernel32 || goto :fail
 del out\gem_weaponscript.lib >nul 2>&1
-echo built out\gem_weaponscript.dll
+copy /y gem_weaponscript\gem_weaponscript.ini out\ >nul || goto :fail
+echo built out\gem_weaponscript.dll + out\gem_weaponscript.ini
 if /i "%1"=="payload" (
     if not exist "%ROOT%\launcher\payload\" (
         echo launcher\payload\ not found at %ROOT%\launcher\payload\

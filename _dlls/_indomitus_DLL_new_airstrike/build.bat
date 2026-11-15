@@ -1,6 +1,6 @@
 @echo off
 rem GEM BombBay - Indomitus Launcher payload DLL
-rem   build.bat            -> dist\gem_bombbay.dll
+rem   build.bat            -> dist\gem_bombbay.dll + dist\gem_bombbay.ini (the settings file, copied from this folder)
 rem   build.bat test       -> dist\bb_test.exe   (offline finder check: bb_test.exe "<path>\call_to_arms.exe")
 rem   build.bat payload    -> build, then copy dll + ini into ..\..\launcher\payload\  (rebuild the launcher after)
 rem   build.bat clean
@@ -60,7 +60,9 @@ if errorlevel 1 (
     %ZIG% cc %CFLAGS% -s -shared -o dist\gem_bombbay.dll source\gem_bombbay.c -lkernel32
     if errorlevel 1 ( echo ERROR: compile failed & exit /b 1 )
 )
-echo built dist\gem_bombbay.dll
+copy /y gem_bombbay.ini dist\ >nul
+if errorlevel 1 ( echo ERROR: could not copy gem_bombbay.ini into dist\ & exit /b 1 )
+echo built dist\gem_bombbay.dll + dist\gem_bombbay.ini
 
 if /i "%1"=="payload" (
     if not exist "..\..\launcher\payload" ( echo ERROR: payload folder ..\..\launcher\payload not found & exit /b 1 )

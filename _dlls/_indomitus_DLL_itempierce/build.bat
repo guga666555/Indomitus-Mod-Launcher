@@ -1,5 +1,5 @@
 @echo off
-rem GEM ItemPierce 0.1 build - Indomitus Launcher payload dll
+rem GEM ItemPierce build - Indomitus Launcher payload dll
 rem   build.bat          -> dist\gem_itempen.dll + dist\gem_itempen.ini
 rem   build.bat payload  -> the above, then copies both into ..\..\launcher\payload\
 rem   build.bat test     -> dist\ip_test.exe, finders on the game / editor / server exe

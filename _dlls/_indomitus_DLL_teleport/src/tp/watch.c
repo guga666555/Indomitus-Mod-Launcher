@@ -16,7 +16,7 @@ static void tp_quant_register(void);
 #define WATCH_STEP  4.0f
 #define WATCH_LINES 1500
 #define WATCH_TAGS  1024
-static int g_watchOn = 1, g_watchLines, g_okWatchEv;
+static int g_watchOn = 0, g_watchLines, g_okWatchEv;
 static struct { uint8_t *e; ULONGLONG t0, until; float pos[3]; char tags[WATCH_TAGS]; } g_watch[WATCH_N];
 typedef void (*FireNamedHookFn)(void *ctx, const void *tag);
 static FireNamedHookFn g_fireNamedOrig;

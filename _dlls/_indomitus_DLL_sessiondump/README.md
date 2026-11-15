@@ -25,8 +25,8 @@ stacks point at, 2 = full memory, several GB), `Type` (raw MINIDUMP_TYPE hex, ov
 `Hotkey`, `TimeoutMs` (max wait at exit, default 30000), `Dir`, `Log` (`gem_sessiondump.log` next to the dll).
 
 ## Install
-- Launcher: `gem_sessiondump.dll` + `.ini` into `launcher\payload\` (and the `server\` payload for
-  a hosted MP server).
+- Launcher: `gem_sessiondump.dll` + `.ini` into `launcher\payload\` (`build.bat payload`); the launcher loads
+  the same files into the host server of a hosted game.
 - In-house test: `inject.bat`-style, `gem_inject.exe gem_sessiondump.dll` while the game runs.
 - Offline test: `build.bat test` (child process loads the dll, ends via ExitProcess and via
   TerminateProcess, both dumps checked).

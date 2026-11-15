@@ -195,8 +195,9 @@ the newest folder is the latest run). At startup every feature prints `ON`, `off
 
 ## Build and offline check
 
-* **Build:** `build.bat`. Needs zig (portable `zig\` copied from the launcher project, zig on PATH, or
-  `pip install ziglang`). Output: `dist\gem_scriptext.dll` (+ a copy of the ini).
+* **Build:** `build.bat`. Needs zig (a portable `zig\` here, the launcher project's `..\..\zig\`, zig on PATH, or
+  `pip install ziglang`). Output: `dist\gem_scriptext.dll` (+ a copy of the ini); `build.bat payload` also copies both
+  into `launcher\payload\`.
 * **Offline check** (Linux/WSL, gcc + clang): `sh tests/run_offline_check.sh <call_to_arms.exe> [editor] [server]`.
   It maps each exe and runs every finder (run this after a game update), tests the `{multiplier}` stub against fake
   parser frames (`tests/mult_stub_test.c`) and the `{seen}` runtime against fake readers, Tags and entities

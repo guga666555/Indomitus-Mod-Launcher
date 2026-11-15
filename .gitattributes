@@ -1,0 +1,12 @@
+# Batch files must reach Windows with CRLF line endings (goto / call labels can fail with LF), whatever
+# the git settings of the PC or the way the repo was downloaded.
+*.bat text eol=crlf
+
+# Never touch these
+*.dll binary
+*.ico binary
+*.bmp binary
+*.wav binary
+*.ttf binary
+*.jpg binary
+*.png binary

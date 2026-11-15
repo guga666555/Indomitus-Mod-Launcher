@@ -531,6 +531,7 @@ static void ch_remove(int i) { g_ch[i].used = 0; InterlockedDecrement(&g_chLive)
 /* ---- target velocity: per chasing unit, the last sample of its target record (game time) ---- */
 typedef struct { uint8_t *ent; void *tgt; float x, y, vx, vy; uint32_t t; } Track;
 #define MAX_TRACK 1024
+#define TRACK_STALE_MS 3000            /* a sample older than this is restarted with velocity 0 (track) */
 static Track g_tr[MAX_TRACK];
 
 /* ---- 0.5.2: both tables are emptied when a new mission starts ---- */
@@ -576,18 +577,28 @@ static void track(uint8_t *e, uint8_t *rec, float *vx, float *vy)
     float x = *(float *)(rec + o_recX), y = *(float *)(rec + o_recY);
     uint32_t now = *g_simTime;
     size_t h = (size_t)(((uintptr_t)e >> 4) * 2654435761u) % MAX_TRACK;
-    Track *t = NULL, *oldest = NULL;
-    for (int k = 0; k < 16; k++) {
+    /* 0.5.3: which slot a unit gets depends on its heap address, which differs on every machine of a network game, so
+       the RESULT must not depend on the slot. Before, a unit that found its 16 slots taken pushed out the oldest of
+       them, even one still in use: that unit's target velocity restarted from 0 at random, on this machine only (seen
+       in the offline replay from about 500 units chasing at once). Now: a unit's own slot is found wherever it is (slots are only
+       emptied by mission_check, so the search ends at the first never-used one), and a new unit takes a never-used
+       slot or one whose sample is older than TRACK_STALE_MS. Such a sample gives velocity 0 and is restarted below
+       in any case, so taking it over changes nothing for its old owner. With more than MAX_TRACK fresh samples the
+       unit gets no velocity; that depends only on how many there are, the same on every machine. */
+    Track *t = NULL, *spare = NULL;
+    for (int k = 0; k < MAX_TRACK; k++) {
         Track *c = &g_tr[(h + k) % MAX_TRACK];
-        if (c->ent == e || !c->ent) { t = c; break; }
-        if (!oldest || (int32_t)(c->t - oldest->t) < 0) oldest = c;
+        if (c->ent == e) { t = c; break; }
+        if (!c->ent) { if (!spare) spare = c; break; }
+        if (!spare && (uint32_t)(now - c->t) > TRACK_STALE_MS) spare = c;
     }
-    if (!t) t = oldest;
+    if (!t) t = spare;
+    if (!t) { *vx = *vy = 0; return; }
     if (t->ent != e || t->tgt != tgt) { t->ent = e; t->tgt = tgt; t->x = x; t->y = y; t->vx = t->vy = 0; t->t = now; }
     else {
         uint32_t dt = now - t->t;
         if (dt >= 100) {
-            if (dt <= 3000) {
+            if (dt <= TRACK_STALE_MS) {
                 float ix = (x - t->x) * 1000.0f / (float)dt, iy = (y - t->y) * 1000.0f / (float)dt;
                 t->vx = 0.5f * t->vx + 0.5f * ix; t->vy = 0.5f * t->vy + 0.5f * iy;
             } else t->vx = t->vy = 0;
