@@ -196,6 +196,14 @@ summary=One script line plays a different sound for each player.
 
 ; ---------------------------------------------------------------- multiplayer
 
+[gem_hostserver]
+name=HostServer
+group=Multiplayer
+summary=Makes hosting reliable: the host server gets every engine extension before it starts.
+- When you host, the game starts a separate server program that runs the match. HostServer starts it frozen and the launcher loads the same extensions into it before it runs.
+- Without it the extensions arrive while the server is already reading the mod's scripts, and on some PCs the server then stops with "unknown condition".
+- Adds nothing to the game itself.
+
 [gem_lobbycheck]
 name=LobbyCheck
 group=Multiplayer

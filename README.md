@@ -20,10 +20,13 @@ and shows a message box when the host and a player differ.
    missing from the profile's `keys.set` (see `hotkeys=`), starts the exe suspended, loads the DLLs,
    verifies they are in, then hides until the game exits. If a DLL fails to load the game is closed
    instead of running half-patched.
-4. While the game runs: when you host a multiplayer game the game starts `call_to_arms_server.exe`. The
-   launcher notices it (job object notification), writes a second verified copy of the payload to
-   `...\payload\<code>\server\` and loads the same DLLs into the server before it runs. This needs the
-   launcher to stay open, so it does not happen with `--no-wait`.
+4. While the game runs: when you host a multiplayer game the game starts `call_to_arms_server.exe`.
+   `gem_hostserver` (in the game) makes it start frozen and tells the launcher, which writes a second
+   verified copy of the payload to `...\payload\<code>\server\` and loads the same DLLs into the
+   server before its first instruction; then the server is let go. Should that not happen, the launcher
+   still finds the server in the process list and loads the DLLs into it while it runs (late: a race
+   with the server's script loading). This needs the launcher to stay open, so it does not happen with
+   `--no-wait`.
 5. When the game exits: gathers that run's logs (launcher, `game.log`, every DLL log, the host server's
    logs, a list of new crash dumps) into one file,
    `%LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log` (the newest 20 are kept).
@@ -75,6 +78,7 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_costred` | `_indomitus_DLL_costred\src` | MP buy menu: cost in red when you cannot afford the unit |
 | `gem_crewvoice` | `_indomitus_DLL_crewvoice\src` | voice lines for vehicles without a crew |
 | `gem_fauna` | `_indomitus_DLL_fauna` | creature units behave like infantry squads |
+| `gem_hostserver` | `_indomitus_DLL_hostserver` | multiplayer: the host server starts frozen until the launcher has loaded the DLLs into it |
 | `gem_itempen` | `_indomitus_DLL_itempierce` | rounds that pierce a worn item carry on into the wearer |
 | `gem_lobbycheck` | `_indomitus_DLL_lobbycheck` | multiplayer: a message when host and players run different launcher builds |
 | `gem_meleechase` | `_indomitus_DLL_meleechase` | fauna and vehicles chase melee targets |

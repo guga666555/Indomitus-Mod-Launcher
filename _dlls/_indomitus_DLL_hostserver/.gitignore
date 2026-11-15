@@ -1,0 +1,3 @@
+dist/
+.zig-cache/
+build_log.txt
