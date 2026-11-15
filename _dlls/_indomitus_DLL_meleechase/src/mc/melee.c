@@ -1,15 +1,11 @@
 /* GEM MeleeChase - melee chase logic
  * Part of the unity build: #included by gem_meleechase.c, not compiled on its own.
  *
- * HUMANS (fight_distance)
- *   The vanilla hand fight starts from Human::eOutdoorsBattle when the target is closer than the brain const
- *   "fight/distance" (vanilla human.ext: 2 m). The state reads the const once, on enter, into a float field and
- *   compares against that field in its tick (start a fight) and in its behaviour step (give up a fight). The
- *   player's attack order (Order::eAttack) reads the const itself when it decides to switch to the hand fight.
- *   GEM MeleeChase makes the distance depend on what the soldier holds RIGHT NOW: before each of those state slots
- *   runs, the field is set to const x fight_distance_mult when the weapon in his hands carries the melee tag (else
- *   to the plain const), and the eAttack read is multiplied the same way. No code bytes are changed for this:
- *   two vtable slots and one call site.
+ * HUMANS: nothing (0.5.0). The fight-distance multiplier (two Human::eOutdoorsBattle vtable slots + the eAttack const
+ *   read) is removed: infantry melee belongs to GEM MeleeStance (stance, draw, charge, blow reach), and two DLLs moving
+ *   the same hand-fight distance worked against each other. The "fight/distance" readers are still LOCATED, read-only:
+ *   they are how find_weapons() reaches GetCurrentWeapon, the weapon list and Tag(const char*), which the vehicle part
+ *   needs. Every hook below skips human entities.
  *
  * VEHICLES / FAUNA (approach)
  *   The vehicle brain (Actor::eVS_Root) has an "approach" behaviour: when its target is out of weapon range it
@@ -22,7 +18,7 @@
  *   - stops only when the target is in reach and not getting away. smooth_repath: re-plans don't brake.
  *   ai_prioritize_melee / ai_prioritize_ranged (def props) replace the approach range the brain computed.
  *
- * Simulation: both parts change AI decisions. Every multiplayer peer needs the DLL (like GEM Fauna's squads).
+ * Simulation: it changes AI decisions. Every multiplayer peer needs the DLL (like GEM Fauna's squads).
  */
 
 /* ------------------------------------------------------------------------------------ */
@@ -43,20 +39,19 @@ static GetWeaponFn g_getWeapon;
 static uint32_t o_weaponry, o_wlistBeg, o_wlistEnd, o_weapItem, o_itemTagBeg, o_itemTagEnd;
 static int g_okWeapons;
 
-/* humans */
+/* weapon finder (find_weapons): walks the human battle state's "fight/distance" readers to reach the weapon getter.
+   Read-only since 0.5.0: nothing here is hooked any more. */
 typedef void  (*TagCtorCStrFn)(void *tag, const char *s);
 typedef float (*ConstGetFn)(void *brain, void *tag, float def);         /* brain const (metres) x world scale */
 typedef uint64_t (*SlotFn)(void *self, uint64_t a, uint64_t b, uint64_t c);
 static TagCtorCStrFn g_tagCtorCStr;
-static ConstGetFn g_constGet, g_constGetAttackOrig;
+static ConstGetFn g_constGet;
 static uint8_t *g_fdStr, *g_fdSiteState, *g_fdSiteAttack;               /* "fight/distance"; its two readers' getter calls */
 static uint32_t o_fightOff;                                             /* eOutdoorsBattle: cached fight distance */
 static uint32_t o_hStateBrain, o_hBrainEntity;                          /* state +x -> brain, brain +x -> entity */
 static void **g_vtBattle;                                               /* Human::eOutdoorsBattle */
 #define MAX_HSLOTS 4
 static int g_hSlot[MAX_HSLOTS], g_hSlotN;
-static SlotFn g_hOrig[MAX_HSLOTS];
-static int g_okHuman;
 
 /* vehicles */
 typedef void *(*MoveCircleFn)(void *circle, uint64_t flags);
@@ -99,7 +94,9 @@ static float g_holdFactor = 1.0f;
 
 /* settings */
 static char  g_meleeTag[48] = "melee"; static size_t g_meleeTagLen = 5;
-static float g_fightMult = 3.0f;
+/* 0.5.1: second melee word for vehicle weapons. The engine gives the word "melee" a meaning of its own on weapons (it applies
+   the human Melee skill; a "pattern gun" vehicle weapon tagged melee crashed the server at spawn), so vehicle guns carry this one */
+static char  g_meleeTag2[48] = "veh_melee"; static size_t g_meleeTag2Len = 9;
 /* re-plan threshold = clamp(distance x fraction, min, max); checks every repathMs, or repathMsClose within closeRange */
 static float g_repathFrac = 0.25f, g_repathMin = 1.0f * WORLD_SCALE, g_repathMax = 10.0f * WORLD_SCALE;
 static uint32_t g_repathMs = 500, g_repathMsClose = 200;
@@ -125,9 +122,9 @@ static uint8_t *rel32_target(uint8_t *insn, int len) { return insn + len + rd_u3
 /* Tags are interned: two Tags are equal when their first qword (the id) is equal (the engine's Tag== at exe+0x556810).
    The ids of the melee tag and the two priority props are built once, lazily on the first engine call that needs them
    (engine thread, after CRT init), with the engine's Tag(const char*) ctor. Until then / without the ctor: name compare. */
-static uint64_t g_idMelee, g_idPropMelee, g_idPropRanged;
+static uint64_t g_idMelee, g_idMelee2, g_idPropMelee, g_idPropRanged;
 static volatile LONG g_idState;                                         /* 0 none, 1 building, 2 ready, 3 unavailable */
-static TagCtorCStrFn g_tagCtorForIds;                                   /* set by find_human (Tag::Tag(const char*)) */
+static TagCtorCStrFn g_tagCtorForIds;                                   /* set by find_weapons (Tag::Tag(const char*)) */
 static int ids_ready(void)
 {
 #ifdef FX_TEST
@@ -137,10 +134,11 @@ static int ids_ready(void)
     if (g_idState != 0) return 0;
     if (InterlockedCompareExchange(&g_idState, 1, 0) != 0) return 0;
     if (!g_tagCtorForIds) { g_idState = 3; return 0; }
-    static uint8_t buf[3][TAG_SIZE * 2] __attribute__((aligned(16)));   /* never freed */
-    const char *names[3] = { g_meleeTag, g_propMelee, g_propRanged };
-    uint64_t *ids[3] = { &g_idMelee, &g_idPropMelee, &g_idPropRanged };
-    for (int i = 0; i < 3; i++) {
+    static uint8_t buf[4][TAG_SIZE * 2] __attribute__((aligned(16)));   /* never freed */
+    const char *names[4] = { g_meleeTag, g_propMelee, g_propRanged, g_meleeTag2 };
+    uint64_t *ids[4] = { &g_idMelee, &g_idPropMelee, &g_idPropRanged, &g_idMelee2 };
+    for (int i = 0; i < 4; i++) {
+        if (!names[i][0]) { *ids[i] = 0; continue; }                       /* second melee word switched off */
         char low[48]; size_t k = 0;
         for (; names[i][k] && k < sizeof low - 1; k++) low[k] = (char)((names[i][k] >= 'A' && names[i][k] <= 'Z') ? names[i][k] + 32 : names[i][k]);
         low[k] = 0;
@@ -178,13 +176,15 @@ static int tags_have_melee(uint8_t *beg, uint8_t *end)
     int byId = -1;
     if (ids_ready()) {
         byId = 0;
-        for (uint8_t *t = beg; t + TAG_SIZE <= end; t += TAG_SIZE) if (*(uint64_t *)t == g_idMelee) { byId = 1; break; }
+        for (uint8_t *t = beg; t + TAG_SIZE <= end; t += TAG_SIZE)
+            if (*(uint64_t *)t == g_idMelee || (g_meleeTag2Len && *(uint64_t *)t == g_idMelee2)) { byId = 1; break; }
         if (IDS_TRUSTED) return byId;
     }
     int byName = 0;
     for (uint8_t *t = beg; t + TAG_SIZE <= end && !byName; t += TAG_SIZE) {
         const MsString *s = (const MsString *)(t + TAG_NAME);
         if (s->size == g_meleeTagLen && !_strnicmp(ms_cstr(s), g_meleeTag, g_meleeTagLen)) byName = 1;
+        else if (g_meleeTag2Len && s->size == g_meleeTag2Len && !_strnicmp(ms_cstr(s), g_meleeTag2, g_meleeTag2Len)) byName = 1;
     }
     if (byId < 0) return byName;
 #ifndef FX_TEST
@@ -198,13 +198,6 @@ static int weapon_is_melee(uint8_t *w)
     uint8_t *item = *(uint8_t **)(w + o_weapItem);
     if (!item) return 0;
     return tags_have_melee(*(uint8_t **)(item + o_itemTagBeg), *(uint8_t **)(item + o_itemTagEnd));
-}
-/* human: the weapon in his hands carries the melee tag */
-static int human_holds_melee(uint8_t *e)
-{
-    if (!e || !(e[ENT_FLAGS] & 4)) return 0;
-    void *wy = *(void **)(e + o_weaponry);
-    return wy && weapon_is_melee((uint8_t *)g_getWeapon(wy));
 }
 /* def {props} contains name (case-insensitive) */
 static int def_has_prop(uint8_t *e, const char *name, const uint64_t *id)
@@ -267,7 +260,10 @@ static int fd_site(uint8_t *lea, uint8_t **ctor, uint8_t **getSite, uint8_t **ge
     return 1;
 }
 
-static int find_human(void)
+/* 0.5.0: was find_human. Locates (never patches) the human battle state's "fight/distance" readers, because one of those
+   slots is the shortest known road to GetCurrentWeapon, the entity's weaponry offset and the weapon list; also the
+   Tag(const char*) ctor used for the interned tag ids. The log lines keep their "human:" prefix. */
+static int find_weapons(void)
 {
     g_fdStr = find_cstr("fight/distance");
     if (!g_fdStr) { logf_("human: \"fight/distance\" not found"); return 0; }
@@ -514,63 +510,6 @@ static int find_hold(void)
 
 #ifndef FX_TEST
 /* ------------------------------------------------------------------------------------ */
-/* humans: fight distance follows the weapon in hand                                    */
-/* ------------------------------------------------------------------------------------ */
-static uint8_t g_tagFight[TAG_SIZE * 2] __attribute__((aligned(16)));                                 /* Tag("fight/distance"), never freed */
-static volatile LONG g_tagState;                                        /* 0 none, 1 building, 2 ready */
-static volatile LONG g_hLogged;
-
-static int fight_tag_ready(void)
-{
-    if (g_tagState == 2) return 1;
-    if (InterlockedCompareExchange(&g_tagState, 1, 0) == 0) {           /* first caller builds it (engine thread, after CRT init) */
-        g_tagCtorCStr(g_tagFight, "fight/distance");
-        MemoryBarrier();
-        g_tagState = 2;
-        return 1;
-    }
-    return g_tagState == 2;
-}
-
-static void set_fight_distance(uint8_t *st)
-{
-    if (!fight_tag_ready()) return;
-    uint8_t *brain = *(uint8_t **)(st + o_hStateBrain);
-    if (!brain) return;
-    uint8_t *e = *(uint8_t **)(brain + o_hBrainEntity);
-    float base = g_constGet(brain, g_tagFight, 0.0f);                    /* default 0: no "not declared" log */
-    if (!(base > 0.0f)) return;
-    int melee = human_holds_melee(e);
-    float want = melee ? base * g_fightMult : base;
-    float *f = (float *)(st + o_fightOff);
-    if (*f != want) {
-        *f = want;
-        if (melee && g_logChase && InterlockedIncrement(&g_hLogged) <= 10)
-            logf_("human %p holds a melee weapon: fight distance %.1f m -> %.1f m", (void *)e, base / WORLD_SCALE, want / WORLD_SCALE);
-    }
-}
-
-#define HUM_WRAP(i) static uint64_t hum_slot##i(void *s, uint64_t a, uint64_t b, uint64_t c) { set_fight_distance((uint8_t *)s); return g_hOrig[i](s, a, b, c); }
-HUM_WRAP(0) HUM_WRAP(1) HUM_WRAP(2) HUM_WRAP(3)
-static const SlotFn g_hWrap[MAX_HSLOTS] = { hum_slot0, hum_slot1, hum_slot2, hum_slot3 };
-
-/* the player's attack order reads the const itself before switching to the hand fight */
-static float fd_attack_get(void *brain, void *tag, float def)
-{
-    float r = g_constGetAttackOrig(brain, tag, def);
-    if (r > 0.0f && brain && human_holds_melee(*(uint8_t **)((uint8_t *)brain + o_hBrainEntity))) r *= g_fightMult;
-    return r;
-}
-
-static int install_human(void)
-{
-    if (!redirect_call(g_fdSiteAttack, (void *)fd_attack_get, (void **)&g_constGetAttackOrig, "fight distance (attack order)")) return 0;
-    for (int i = 0; i < g_hSlotN; i++)
-        if (!vt_hook(g_vtBattle, g_hSlot[i], (void *)g_hWrap[i], (void **)&g_hOrig[i])) { logf_("human: vtable slot %d not hooked", g_hSlot[i]); return 0; }
-    return 1;
-}
-
-/* ------------------------------------------------------------------------------------ */
 /* vehicles: approach orders follow a moving target                                     */
 /* ------------------------------------------------------------------------------------ */
 typedef struct { void *order; uint8_t *ent, *brain; float cx, cy, r, reach; uint32_t next; uint8_t used, started, repath; } Chase;
@@ -593,6 +532,41 @@ static void ch_remove(int i) { g_ch[i].used = 0; InterlockedDecrement(&g_chLive)
 typedef struct { uint8_t *ent; void *tgt; float x, y, vx, vy; uint32_t t; } Track;
 #define MAX_TRACK 1024
 static Track g_tr[MAX_TRACK];
+
+/* ---- 0.5.2: both tables are emptied when a new mission starts ---- */
+/* The chase table names orders, units and brains of the running scene. A slot is freed by the order's own stop step
+   or destructor (mt_update / mt_dtor); an order that goes away with its whole scene runs neither, so its slot stayed
+   used into the next mission. Two effects: g_chLive stayed above 0 for the rest of the session (every eMoveTask
+   update of every unit then took the lock and searched the table), and a new order allocated at a stale slot's
+   address was taken for the old one, with mt_update reading that slot's dead brain and unit. GEM MeleeStance needed
+   the same reset in 0.7.31 (dedicated server crash right after a match ended).
+   "New mission" = the simulation clock is not where the last hooked call left it: it stepped back (restart, next
+   map, a save from earlier), or it jumped ahead by more than EPOCH_GAP_MS (a save from later). Within one mission
+   some hooked call runs every quant while a chase is live, and a quant is well under 100 ms, so a live chase never
+   sees such a gap. The rule only reads the simulation clock, so every machine of a network game resets on the same
+   quant. Caller must NOT hold g_cs. */
+#define EPOCH_GAP_MS 5000
+static volatile uint32_t g_epochLast;                                  /* clock at the last check, 0 = none yet */
+static volatile LONG g_epochLogged;
+static int epoch_changed(uint32_t last, uint32_t now) { return last && (uint32_t)(now - last) > EPOCH_GAP_MS; }
+static void mission_check(void)
+{
+    uint32_t now = *g_simTime, last = g_epochLast;
+    if (epoch_changed(last, now)) {
+        EnterCriticalSection(&g_cs);
+        if (epoch_changed(g_epochLast, now)) {                         /* not done by another thread meanwhile */
+            int live = (int)g_chLive;
+            memset(g_ch, 0, sizeof g_ch); g_chHigh = 0; InterlockedExchange(&g_chLive, 0);
+            memset(g_tr, 0, sizeof g_tr);
+            g_epochLast = now ? now : 1;
+            if (g_logChase && InterlockedIncrement(&g_epochLogged) <= 20)
+                logf_("simulation clock %u -> %u ms: new mission, chase table cleared (%d slot(s) were still in use)", last, now, live);
+        }
+        LeaveCriticalSection(&g_cs);
+        return;
+    }
+    g_epochLast = now ? now : 1;
+}
 
 /* caller holds g_cs. Velocity in world units per second, smoothed; 0 for a new target. Only floats are kept: the target
    pointer is compared, never dereferenced. */
@@ -723,6 +697,7 @@ static void log_no_melee(uint8_t *e)
 static uint64_t vs_tick(void *s, uint64_t a, uint64_t b, uint64_t c)
 {
     t_chase = 0; t_haveV = 0; t_mel = 0;
+    mission_check();                                                    /* 0.5.2 */
     uint8_t *brain = *(uint8_t **)((uint8_t *)s + o_vStateBrain);
     uint8_t *e = brain ? *(uint8_t **)(brain + o_vBrainEntity) : NULL;
     if (e && !(e[ENT_FLAGS] & 4) && (e[ENT_FLAGS] & 2)) {
@@ -796,6 +771,8 @@ static uint64_t vs_tick(void *s, uint64_t a, uint64_t b, uint64_t c)
 
 static uint64_t mt_update(void *o, uint64_t phase, uint64_t a, uint64_t b)
 {
+    if (!g_chLive) return g_mtUpdateOrig(o, phase, a, b);
+    mission_check();                                                    /* 0.5.2: a mission without vehicles never runs vs_tick */
     if (!g_chLive) return g_mtUpdateOrig(o, phase, a, b);
     EnterCriticalSection(&g_cs);
     int i = ch_find(o);

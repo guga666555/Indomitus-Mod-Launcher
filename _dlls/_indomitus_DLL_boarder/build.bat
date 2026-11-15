@@ -1,5 +1,5 @@
 @echo off
-rem GEM BoardFilter 0.2 build - Indomitus Launcher payload dll
+rem GEM BoardFilter 0.4 build - Indomitus Launcher payload dll
 rem   build.bat          -> dist\gem_boardfilter.dll + dist\gem_boardfilter.ini
 rem   build.bat payload  -> the above, then copies both into ..\..\launcher\payload\
 rem   build.bat test     -> dist\bf_test.exe, run on the game / editor / server exe

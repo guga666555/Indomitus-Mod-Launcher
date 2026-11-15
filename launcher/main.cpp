@@ -9,6 +9,9 @@
 //      the game profile, starts the exe suspended, queues LoadLibraryW(dll) as an APC on its main
 //      thread ("early bird": runs during loader init, before the game's entry point), resumes it,
 //      verifies every DLL is in, then hides itself until the game exits.
+//   4. When the game / editor exits, gathers that run's logs (launcher, game.log, every payload DLL
+//      log, the MP host server's DLL logs + log_ds game.log, new minidumps) into one file in
+//      %LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log (newest 20 kept).
 //
 // Settings come from gem_launcher.ini compiled in at build time (launcher\settings.gen.ini); nothing
 // ships next to the exe. Command line: --game | --editor (skip the window), --console, --no-wait,
@@ -29,6 +32,8 @@
 #include <bcrypt.h>
 #include <winhttp.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
@@ -140,6 +145,7 @@ struct Config {
     std::wstring modsMarker = L"INDOMITUS MOD LAUNCHER";     // ini: mods_marker= (words in a mod.info {desc ""})
     bool         modsExclusive = false;    // true = enable ONLY those
     std::wstring modsProfile;              // profile folder id; empty = most recently used
+    std::wstring hotkeys;                  // ini: hotkeys= ("name=VALUE;name=VALUE"): default keys added to the profile keys.set when missing
     bool         showModFolderButton = true; // ini: show_mod_folder_button=
     bool         showDisableModsButton = true; // ini: show_disable_mods_button=
     std::wstring version;                  // shown in the window (ini: version=)
@@ -825,6 +831,69 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
     return true;
 }
 
+// ---- ability hotkeys
+// The mod's ability buttons name a key slot ({Key "actions/melee_toggle"} in resource\interface\action\*.set), and the game
+// only reads slots from the player's own <profile>\keys.set: defaults shipped inside a mod are ignored, so until now every
+// player had to add the lines by hand. Before each launch the slots listed in hotkeys= that are MISSING from keys.set are
+// added with their default key. A slot that is already there is never touched, whatever it is bound to (the player's own
+// choice, or cleared on purpose with {value ""}). A one-time keys.set.launcher-backup is kept. Never blocks the launch.
+//   {keys
+//       {"actions/jetpack"
+//           {value "DOUBLE + KEY_J"}
+//       }
+//   }
+static void EnsureHotkeys(const Config& cfg)
+{
+    if (cfg.hotkeys.empty()) return;
+    std::wstring opt = FindOptionsSet(cfg);
+    if (opt.empty()) return;                                   // no profile yet (first start): next launch
+    size_t slash = opt.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return;
+    std::wstring keys = opt.substr(0, slash) + L"\\keys.set";
+    if (!PathFileExistsW(keys.c_str())) { Log(L"hotkeys: no %ls yet - nothing added", keys.c_str()); return; }
+    std::string text = ReadFileA(keys);
+    size_t open = text.find("{keys"), last = text.rfind('}');
+    if (text.empty() || open == std::string::npos || last == std::string::npos || last < open) {
+        Log(L"hotkeys: unexpected layout in %ls - left alone", keys.c_str());
+        return;
+    }
+    const char* nl = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+
+    std::string add; std::wstring added;
+    const std::string list = Utf8(cfg.hotkeys);
+    for (size_t a = 0; a < list.size();) {
+        size_t b = list.find(';', a);
+        if (b == std::string::npos) b = list.size();
+        std::string item = list.substr(a, b - a);
+        a = b + 1;
+        size_t eq = item.find('=');
+        if (eq == std::string::npos) continue;
+        auto trim = [](std::string v) {
+            size_t i = v.find_first_not_of(" \t"), j = v.find_last_not_of(" \t");
+            return i == std::string::npos ? std::string() : v.substr(i, j - i + 1);
+        };
+        std::string name = trim(item.substr(0, eq)), value = trim(item.substr(eq + 1));
+        if (name.empty() || value.empty() || name.find('"') != std::string::npos || value.find('"') != std::string::npos) continue;
+        // present already? the slot name in quotes, any case
+        std::string hay = AsciiLower(text), needle = "\"" + AsciiLower(name) + "\"";
+        if (hay.find(needle) != std::string::npos) continue;
+        bool quote = value.find(' ') != std::string::npos || value.find('+') != std::string::npos;
+        add += std::string("\t{\"") + name + "\"" + nl + "\t\t{value " + (quote ? "\"" + value + "\"" : value) + "}" + nl + "\t}" + nl;
+        if (!added.empty()) added += L", ";
+        added += Widen(name) + L" = " + Widen(value);
+    }
+    if (add.empty()) { Log(L"hotkeys: all ability keys already in %ls", keys.c_str()); return; }
+
+    // the new lines go right before the closing brace of {keys}, on a line of their own
+    std::string head = text.substr(0, last);
+    if (!head.empty() && head.back() != '\n') head += nl;
+    std::string out = head + add + text.substr(last);
+    std::wstring err;
+    if (!EnsureProfileBackup(keys, text, err)) { Log(L"hotkeys: %ls", err.c_str()); return; }
+    if (!WriteFileAtomic(keys, out)) { Log(L"hotkeys: could not write %ls - nothing added", keys.c_str()); return; }
+    Log(L"hotkeys added to %ls: %ls", keys.c_str(), added.c_str());
+}
+
 // Removes the configured mods from the profile list so a plain Steam start runs vanilla.
 static bool DisableRequiredMods(const Config& cfg, std::wstring& err, int& removed)
 {
@@ -969,6 +1038,222 @@ static std::wstring BuildEnvironment(const std::wstring& appid)
     return block;
 }
 
+// ---------------------------------------------------------------- session log
+// When the game / editor exits (or is closed for a missing DLL), every log of that run goes into
+// one file: %LocalAppData%\Indomitus Launcher\logs\session_<date>_<time>_<exe>.log, newest 20 kept.
+// In order: this launcher's log, the game's game.log, each payload DLL's log, the MP host server's
+// DLL logs (ChildInject's <payload>\server*\) and its game.log (log_ds), then new minidumps.
+// A file is taken when it was written during the run; in logs whose lines carry a
+// "[YYYY-MM-DD hh:mm:ss" stamp (append-mode logs) only lines from the run on are kept.
+
+struct SessionInfo {
+    ULONGLONG start = 0;        // FILETIME (UTC), 2 s before the process was created
+    std::string startStamp;     // same moment, local "YYYY-MM-DD hh:mm:ss"
+    std::wstring startName;     // local "YYYY-MM-DD_hh-mm-ss" for the file name
+    std::wstring exe;
+    DWORD pid = 0;
+    bool active = false;
+};
+static SessionInfo g_session;
+static const size_t kSessionKeep = 20;
+static const size_t kSessionFileCap = 8u << 20;   // per file; a bigger one keeps its last 8 MB
+
+static ULONGLONG FtU64(const FILETIME& f) { return ((ULONGLONG)f.dwHighDateTime << 32) | f.dwLowDateTime; }
+
+static std::wstring LocalAppDataDir()
+{
+    wchar_t p[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, p))) return L"";
+    return p;
+}
+
+static void SessionBegin(const std::wstring& exe, DWORD pid)
+{
+    FILETIME now; GetSystemTimeAsFileTime(&now);
+    ULONGLONG t = FtU64(now) - 20000000ull;   // 2 s slack: file times and second-stamped lines
+    FILETIME ft{ (DWORD)t, (DWORD)(t >> 32) }, lft{};
+    SYSTEMTIME st{};
+    FileTimeToLocalFileTime(&ft, &lft);
+    FileTimeToSystemTime(&lft, &st);
+    char a[32]; wchar_t b[32];
+    snprintf(a, sizeof(a), "%04u-%02u-%02u %02u:%02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    swprintf(b, 32, L"%04u-%02u-%02u_%02u-%02u-%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    g_session.start = t;
+    g_session.startStamp = a;
+    g_session.startName = b;
+    g_session.exe = exe;
+    g_session.pid = pid;
+    g_session.active = true;
+}
+
+// Whole file, read shared (a server still shutting down may hold it). False when missing or not
+// written since the run started.
+static bool ReadIfWrittenSince(const std::wstring& path, ULONGLONG since, std::string& out)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FILETIME wt{};
+    LARGE_INTEGER size{};
+    bool ok = GetFileTime(h, nullptr, nullptr, &wt) && GetFileSizeEx(h, &size) && FtU64(wt) >= since;
+    if (ok) {
+        out.assign((size_t)size.QuadPart, '\0');
+        DWORD got = 0;
+        size_t pos = 0;
+        while (pos < out.size() && ReadFile(h, &out[pos], (DWORD)std::min<size_t>(out.size() - pos, 1u << 20), &got, nullptr) && got) pos += got;
+        out.resize(pos);
+    }
+    CloseHandle(h);
+    return ok;
+}
+
+static bool HasLineStamp(const std::string& s, size_t i, size_t e)
+{
+    // "[YYYY-MM-DD hh:mm:ss"
+    if (e - i < 20 || s[i] != '[') return false;
+    for (int k : {1, 2, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19}) if (!isdigit((unsigned char)s[i + k])) return false;
+    return s[i + 5] == '-' && s[i + 8] == '-' && s[i + 11] == ' ' && s[i + 14] == ':' && s[i + 17] == ':';
+}
+
+// Drops stamped lines older than `stamp` (and the unstamped lines that follow them).
+static std::string KeepLinesFrom(const std::string& text, const std::string& stamp, size_t& dropped)
+{
+    std::string out;
+    bool keep = true;
+    dropped = 0;
+    for (size_t i = 0; i < text.size();) {
+        size_t e = text.find('\n', i);
+        e = e == std::string::npos ? text.size() : e + 1;
+        if (HasLineStamp(text, i, e)) keep = text.compare(i + 1, 19, stamp) >= 0;
+        if (keep) out.append(text, i, e - i); else ++dropped;
+        i = e;
+    }
+    return out;
+}
+
+static void SessionAddFile(std::string& out, std::vector<std::string>& index, const std::wstring& title, const std::wstring& path)
+{
+    std::string body;
+    if (!ReadIfWrittenSince(path, g_session.start, body)) return;
+    if (body.compare(0, 3, "\xEF\xBB\xBF") == 0) body.erase(0, 3);
+    size_t dropped = 0;
+    body = KeepLinesFrom(body, g_session.startStamp, dropped);
+    std::string note;
+    if (dropped) note += "(" + std::to_string(dropped) + " older line(s) left out)\r\n";
+    if (body.size() > kSessionFileCap) {
+        size_t cut = body.size() - kSessionFileCap;
+        size_t nl = body.find('\n', cut);
+        cut = nl == std::string::npos ? cut : nl + 1;
+        note += "(first " + std::to_string(cut) + " bytes left out, the file is bigger than 8 MB)\r\n";
+        body.erase(0, cut);
+    }
+    std::string t = Utf8(title);
+    index.push_back(t + "  (" + std::to_string(body.size()) + " bytes)");
+    out += "\r\n==================== " + t + "\r\n---- " + Utf8(path) + "\r\n" + note + body;
+    if (!out.empty() && out.back() != '\n') out += "\r\n";
+}
+
+// File names in `dir` matching `pattern`, sorted case-insensitively.
+static std::vector<std::wstring> ListFiles(const std::wstring& dir, const wchar_t* pattern, bool dirs = false)
+{
+    std::vector<std::wstring> out;
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\" + pattern).c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return out;
+    do {
+        bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (isDir != dirs || !wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+        out.push_back(fd.cFileName);
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
+    return out;
+}
+
+static void WriteSessionLog(DWORD exitCode, const wchar_t* how)
+{
+    if (!g_session.active) return;
+    g_session.active = false;
+    std::wstring local = LocalAppDataDir();
+    if (local.empty()) return;
+    std::wstring dir = local + L"\\Indomitus Launcher\\logs";
+    CreateDirectoryW((local + L"\\Indomitus Launcher").c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    std::wstring exeName = PathFindFileNameW(g_session.exe.c_str());
+    std::wstring stem = exeName;
+    if (stem.size() > 4 && !_wcsicmp(stem.c_str() + stem.size() - 4, L".exe")) stem.resize(stem.size() - 4);
+    std::wstring path = dir + L"\\session_" + g_session.startName + L"_" + stem + L".log";
+    Log(L"session log: %ls", path.c_str());
+
+    std::string body;
+    std::vector<std::string> index;
+    bool havePayload = !g_cfg.payloadDir.empty();   // DEV builds have none
+    SessionAddFile(body, index, L"launcher", g_dir + L"\\gem_launcher.log");
+    // the game config root is Documents\my games\gates of hell on some PCs and
+    // %LocalAppData%\digitalmindsoft\gates of hell on others (the other can hold a stale copy;
+    // SessionAddFile and the dump scan only take files written since the start, so search both)
+    std::vector<std::wstring> gameRoots;
+    {
+        wchar_t p[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, p)))
+            gameRoots.push_back(std::wstring(p) + L"\\my games\\gates of hell");
+        gameRoots.push_back(local + L"\\digitalmindsoft\\gates of hell");
+    }
+    for (const auto& gameLogs : gameRoots)
+        SessionAddFile(body, index, L"game: game.log", gameLogs + L"\\log\\game.log");
+    if (havePayload) for (const auto& f : ListFiles(g_cfg.payloadDir, L"*.log")) SessionAddFile(body, index, L"dll: " + f, g_cfg.payloadDir + L"\\" + f);
+    if (havePayload) for (const auto& sd : ListFiles(g_cfg.payloadDir, L"server*", true)) {
+        std::wstring d = g_cfg.payloadDir + L"\\" + sd;
+        for (const auto& f : ListFiles(d, L"*.log")) SessionAddFile(body, index, L"host server dll: " + sd + L"\\" + f, d + L"\\" + f);
+    }
+    for (const auto& gameLogs : gameRoots)
+        SessionAddFile(body, index, L"host server: game.log", gameLogs + L"\\log_ds\\game.log");
+
+    std::string dumps;
+    for (const auto& gameLogs : gameRoots)
+    for (const wchar_t* sub : {L"log", L"log_ds"}) {
+        std::wstring d = gameLogs + L"\\" + sub + L"\\minidumps";
+        WIN32_FIND_DATAW fd;
+        HANDLE f = FindFirstFileW((d + L"\\*").c_str(), &fd);
+        if (f == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (FtU64(fd.ftLastWriteTime) < g_session.start) continue;
+            ULONGLONG sz = ((ULONGLONG)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+            dumps += Utf8(d + L"\\" + fd.cFileName) + "  (" + std::to_string(sz) + " bytes)\r\n";
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+
+    SYSTEMTIME end; GetLocalTime(&end);
+    char buf[512];
+    std::string head = "\xEF\xBB\xBFIndomitus session log\r\n";
+    head += "launcher   " + Utf8(g_cfg.buildLabel) + " " + Utf8(g_cfg.version) + ", payload " + Utf8(g_cfg.fingerprint) + "\r\n";
+    head += "exe        " + Utf8(g_session.exe) + "  (pid " + std::to_string(g_session.pid) + ")\r\n";
+    head += "started    " + g_session.startStamp + "  (taken from 2 s before the start)\r\n";
+    snprintf(buf, sizeof(buf), "ended      %04u-%02u-%02u %02u:%02u:%02u\r\n", end.wYear, end.wMonth, end.wDay, end.wHour, end.wMinute, end.wSecond);
+    head += buf;
+    snprintf(buf, sizeof(buf), "exit code  %lu (0x%08lX)%s\r\n", (unsigned long)exitCode, (unsigned long)exitCode,
+             exitCode >= 0xC0000000u ? "  = crashed (Windows exception code)" : "");
+    head += buf;
+    if (how && *how) head += "note       " + Utf8(how) + "\r\n";
+    head += "dlls       ";
+    for (size_t i = 0; i < g_cfg.dlls.size(); ++i) head += (i ? ", " : "") + Utf8(PathFindFileNameW(g_cfg.dlls[i].c_str()));
+    head += "\r\n\r\nin this file:\r\n";
+    for (const auto& s : index) head += "  " + s + "\r\n";
+    head += dumps.empty() ? "\r\nno new minidumps\r\n" : "\r\nnew minidumps:\r\n" + dumps;
+    head += body;
+
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { Log(L"session log: could not write %ls: %ls", path.c_str(), LastErrorText().c_str()); return; }
+    DWORD wrote = 0;
+    WriteFile(h, head.data(), (DWORD)head.size(), &wrote, nullptr);
+    CloseHandle(h);
+
+    std::vector<std::wstring> old = ListFiles(dir, L"session_*.log");   // names sort by start time
+    for (size_t i = 0; i + kSessionKeep < old.size(); ++i) DeleteFileW((dir + L"\\" + old[i]).c_str());
+}
+
 // Starts `exe` suspended, injects, resumes, verifies. On success returns 0 and hands back the
 // process handle (caller waits on it / closes it). On failure returns a non-zero code after
 // showing the error.
@@ -989,6 +1274,7 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
     {
         std::wstring err;
         if (!EnsureModsEnabled(g_cfg, err)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
+        EnsureHotkeys(g_cfg);
     }
 
     std::wstring exeDir = DirOf(exe);
@@ -1006,11 +1292,14 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
                         (LPVOID)env.data(), exeDir.c_str(), &si, &pi))
         return Fail(2, L"Could not start %ls:\n%ls", PathFindFileNameW(exe.c_str()), LastErrorText().c_str());
     Log(L"pid %u created (suspended)", pi.dwProcessId);
+    SessionBegin(exe, pi.dwProcessId);
 
     if (!InjectEarlyBird(pi.hProcess, pi.hThread, dlls)) {
         TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-        return Fail(3, L"Injection failed before the process started; it was closed.");
+        int rc = Fail(3, L"Injection failed before the process started; it was closed.");
+        WriteSessionLog(1, L"injection failed, the launcher closed the process");
+        return rc;
     }
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
@@ -1022,7 +1311,9 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
         DWORD code = 0;
         if (GetExitCodeProcess(pi.hProcess, &code) && code != STILL_ACTIVE) {
             CloseHandle(pi.hProcess);
-            return Fail(4, L"%ls exited right after start (code %u).\nIs Steam running?", PathFindFileNameW(exe.c_str()), code);
+            int rc = Fail(4, L"%ls exited right after start (code %u).\nIs Steam running?", PathFindFileNameW(exe.c_str()), code);
+            WriteSessionLog(code, L"exited right after start");
+            return rc;
         }
         allLoaded = true;
         for (const auto& dll : dlls) if (!IsModuleLoaded(pi.hProcess, dll)) { allLoaded = false; break; }
@@ -1040,9 +1331,11 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 5000);
         CloseHandle(pi.hProcess);
-        return Fail(3, L"The Indomitus engine extension did not load (%ls), so the game was closed.\n\n"
-                       L"Most often an antivirus blocked it - allow the launcher and the folder\n"
-                       L"%%LocalAppData%%\\Indomitus Launcher, then try again.", missing.c_str());
+        int rc = Fail(3, L"The Indomitus engine extension did not load (%ls), so the game was closed.\n\n"
+                         L"Most often an antivirus blocked it - allow the launcher and the folder\n"
+                         L"%%LocalAppData%%\\Indomitus Launcher, then try again.", missing.c_str());
+        WriteSessionLog(1, (L"DLL(s) did not load, the launcher closed the process: " + missing).c_str());
+        return rc;
     }
     outProcess = pi.hProcess;
     return 0;
@@ -1055,6 +1348,7 @@ static int WaitAndLogExit(HANDLE hProcess)
     GetExitCodeProcess(hProcess, &code);
     Log(L"process exited with code %u", code);
     CloseHandle(hProcess);
+    WriteSessionLog(code, nullptr);
     return (int)code;
 }
 
@@ -2731,6 +3025,7 @@ static int RealMain(int argc, wchar_t** argv)
         cfg.modsMarker    = ReadIni(L"mods_marker", L"INDOMITUS MOD LAUNCHER");
         cfg.modsExclusive = ReadIni(L"mods_exclusive", L"0") == L"1";
         cfg.modsProfile   = ReadIni(L"mods_profile");
+        cfg.hotkeys       = ReadIni(L"hotkeys", L"actions/melee_toggle=SHIFT + KEY_C;actions/overcharge=SHIFT + KEY_O;actions/jetpack=DOUBLE + KEY_J;actions/sacrifice=SHIFT + KEY_K;actions/activate_drop=SHIFT + KEY_SPACE");
         cfg.showModFolderButton = ReadIni(L"show_mod_folder_button", L"1") != L"0";
         cfg.showDisableModsButton = ReadIni(L"show_disable_mods_button", L"1") != L"0";
         cfg.version    = ReadIni(L"version");
