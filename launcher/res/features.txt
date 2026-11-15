@@ -194,6 +194,17 @@ summary=One script line plays a different sound for each player.
 - `@side` in a sound name becomes `ally`, `enemy` or `neutral` on each player's machine, depending on how that player relates to the unit's owner.
 - `@army` becomes the listener's own army, and `@who` becomes `enemy_<army>` for the owner's enemies.
 
+; ---------------------------------------------------------------- multiplayer
+
+[gem_lobbycheck]
+name=LobbyCheck
+group=Multiplayer
+summary=Warns when the players in a multiplayer lobby do not all run the same launcher build.
+- The host's game writes its launcher version and build code into the Steam lobby, and every player writes his own.
+- A player who joins a host with a different build gets a message box that names both versions and says who has to update.
+- The host gets the same message for every player whose build differs, or who reports none (an older launcher).
+- It only compares and tells: it never blocks a match and changes nothing in the game itself.
+
 ; ---------------------------------------------------------------- diagnostics
 
 [gem_sessiondump]

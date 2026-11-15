@@ -1027,19 +1027,27 @@ static std::wstring BuildEnvironment(const std::wstring& appid)
 {
     // Steam sets these for games it launches; SteamAPI_RestartAppIfNecessary() then does not
     // relaunch through Steam, so the game stays in the process we created.
+    //
+    // INDOMITUS_PAYLOAD / INDOMITUS_LAUNCHER_VERSION tell the payload which launcher build started the
+    // game (the MP host server inherits them from the game). gem_lobbycheck.dll publishes them in the
+    // Steam lobby and warns when the host and a player carry different builds.
     std::wstring block;
     LPWCH env = GetEnvironmentStringsW();
     for (LPWCH p = env; *p; p += wcslen(p) + 1) {
         std::wstring kv = p;
         if (_wcsnicmp(kv.c_str(), L"SteamAppId=", 11) == 0 ||
             _wcsnicmp(kv.c_str(), L"SteamGameId=", 12) == 0 ||
-            _wcsnicmp(kv.c_str(), L"SteamOverlayGameId=", 19) == 0) continue;
+            _wcsnicmp(kv.c_str(), L"SteamOverlayGameId=", 19) == 0 ||
+            _wcsnicmp(kv.c_str(), L"INDOMITUS_PAYLOAD=", 18) == 0 ||
+            _wcsnicmp(kv.c_str(), L"INDOMITUS_LAUNCHER_VERSION=", 27) == 0) continue;
         block += kv; block += L'\0';
     }
     FreeEnvironmentStringsW(env);
     block += L"SteamAppId=" + appid;         block += L'\0';
     block += L"SteamGameId=" + appid;        block += L'\0';
     block += L"SteamOverlayGameId=" + appid; block += L'\0';
+    if (!g_cfg.fingerprint.empty()) { block += L"INDOMITUS_PAYLOAD=" + g_cfg.fingerprint;       block += L'\0'; }
+    if (!g_cfg.version.empty())     { block += L"INDOMITUS_LAUNCHER_VERSION=" + g_cfg.version; block += L'\0'; }
     block += L'\0';
     return block;
 }
@@ -1232,22 +1240,30 @@ static void WriteSessionLog(DWORD exitCode, const wchar_t* how)
 // ---------------------------------------------------------------- MP host server
 // Hosting a multiplayer game makes the game start call_to_arms_server.exe, and that server runs the
 // simulation: without the payload it stops at script load on the first ScriptExt word. The launcher
-// carries the payload into it itself (no DLL inside the game does this):
+// carries the payload into it itself (no DLL inside the game does this). It notices the server two ways:
 //   - the game is put in a job object with no limits; the job tells the launcher, through a
-//     completion port, the moment the game creates a child process
-//   - a child whose image is call_to_arms_server.exe in the game's own folder is frozen at once, gets
-//     its own SHA-256 checked copy of the payload from this exe's resources in <payload>\server\ (so
-//     the server's DLLs write their own logs), and the same LoadLibraryW APCs on its first thread as
-//     the game got. The notice arrives while the server is still being created or is in loader
-//     init, and APCs queued then run before its entry point.
-//   - every DLL is then checked; one that is missing after 3 s is loaded with a remote thread
-//     (late, but a server without the payload cannot run the mod at all) and logged as such.
+//     completion port, the moment the game creates a child process (the early way)
+//   - every 250 ms the process list is looked through for a call_to_arms_server.exe that the game
+//     started, or that started after the game did (the safety net: a server the job did not report
+//     or that could not be opened in time, and the only way when the game could not be put in a job)
+// A child whose image is call_to_arms_server.exe in the game's own folder is frozen at once, gets its
+// own SHA-256 checked copy of the payload from this exe's resources in <payload>\server\ (so the
+// server's DLLs write their own logs), and the same LoadLibraryW APCs on its first thread as the game
+// got. The job's notice arrives while the server is still being created or is in loader init, and
+// APCs queued then run before its entry point.
+// Every DLL is then checked; one that is missing after 3 s (0.5 s for a server found in the process
+// list, which is past loader init) is loaded with a remote thread: late, but a server without the
+// payload cannot run the mod at all, and its scripts are only read several seconds after it starts.
+// Everything seen and decided is written to gem_launcher.log as "host server: ...".
 // Needs the launcher to stay open (not with --no-wait / wait_for_exit=0).
 
 struct ServerWatch {
     HANDLE job = nullptr, port = nullptr, thread = nullptr;
     std::wstring serverExe;     // full path the child must have
     DWORD gamePid = 0;
+    ULONGLONG started = 0;      // when the watch began (FILETIME): a server older than this is not ours
+    std::vector<DWORD> handled; // pids already dealt with (watch thread only)
+    int ignoredLogged = 0, strayLogged = 0;   // caps for the "not the server" log lines
 };
 static ServerWatch g_sw;
 static const ULONG_PTR kSwKeyJob = 1, kSwKeyStop = 2;
@@ -1269,11 +1285,35 @@ static bool ExtractServerPayload(std::vector<std::wstring>& dlls)
     return !dlls.empty();
 }
 
+// A short wait for something another process is in the middle of creating: yields for the first 30 ms
+// (a Sleep(1) can take 15 ms), then sleeps 1 ms at a time.
+static void BriefWait(ULONGLONG since)
+{
+    Sleep(GetTickCount64() - since < 30 ? 0 : 1);
+}
+
+// True when both paths name the same file: the same text, or two spellings of one file on disk.
+static bool SameFile(const std::wstring& a, const std::wstring& b)
+{
+    if (_wcsicmp(a.c_str(), b.c_str()) == 0) return true;
+    auto info = [](const std::wstring& p, BY_HANDLE_FILE_INFORMATION& out) {
+        HANDLE h = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        bool ok = GetFileInformationByHandle(h, &out) != FALSE;
+        CloseHandle(h);
+        return ok;
+    };
+    BY_HANDLE_FILE_INFORMATION ia{}, ib{};
+    return info(a, ia) && info(b, ib) && ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber &&
+           ia.nFileIndexHigh == ib.nFileIndexHigh && ia.nFileIndexLow == ib.nFileIndexLow;
+}
+
 // The oldest thread of `pid` (its main thread), opened for APCs and suspend / resume. The first
 // thread is inserted a moment after the process itself, so this retries for up to 2 s.
 static HANDLE OpenMainThread(DWORD pid)
 {
-    for (int attempt = 0; attempt < 200; ++attempt) {
+    for (ULONGLONG t0 = GetTickCount64(); GetTickCount64() - t0 <= 2000; BriefWait(t0)) {
         HANDLE best = nullptr;
         ULONGLONG bestTime = ~0ull;
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -1291,19 +1331,53 @@ static HANDLE OpenMainThread(DWORD pid)
             CloseHandle(snap);
         }
         if (best) return best;
-        Sleep(10);
     }
     return nullptr;
 }
 
-static void InjectHostServer(DWORD pid)
+// Looks at one child of the game and, if it is the host server, puts the payload in.
+// `early` = reported by the job while the process is being created; false = found in the process list.
+// Returns false only when the process could not be opened or named, so the process list may try it again.
+static bool InjectHostServer(DWORD pid, bool early)
 {
-    HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ |
-                              PROCESS_CREATE_THREAD | PROCESS_SUSPEND_RESUME | SYNCHRONIZE, FALSE, pid);
-    if (!proc) return;                                         // gone already, or not ours to open
+    // The job reports a child before Windows has finished creating it. Until then OpenProcess answers
+    // "invalid parameter", the same answer as for a process that is already gone, so that answer is
+    // retried for a short while.
+    HANDLE proc = nullptr;
+    DWORD openErr = 0;
+    for (ULONGLONG t0 = GetTickCount64();; BriefWait(t0)) {
+        proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ |
+                           PROCESS_CREATE_THREAD | PROCESS_SUSPEND_RESUME | SYNCHRONIZE, FALSE, pid);
+        if (proc) break;
+        openErr = GetLastError();
+        if (openErr != ERROR_INVALID_PARAMETER || GetTickCount64() - t0 > 300) break;
+    }
+    if (!proc) {
+        if (g_sw.ignoredLogged++ < 20) Log(L"host server: child pid %u could not be opened (%ls)", pid, LastErrorText(openErr).c_str());
+        return false;
+    }
     wchar_t image[MAX_PATH * 2] = L"";
-    DWORD len = MAX_PATH * 2;
-    if (!QueryFullProcessImageNameW(proc, 0, image, &len) || _wcsicmp(image, g_sw.serverExe.c_str()) != 0) { CloseHandle(proc); return; }
+    bool named = false;
+    for (ULONGLONG t0 = GetTickCount64(); !named && GetTickCount64() - t0 <= 300; ) {
+        DWORD len = MAX_PATH * 2;
+        named = QueryFullProcessImageNameW(proc, 0, image, &len) != FALSE;
+        if (!named) BriefWait(t0);
+    }
+    if (!named) {
+        if (g_sw.ignoredLogged++ < 20) Log(L"host server: child pid %u has no readable image name (%ls)", pid, LastErrorText().c_str());
+        CloseHandle(proc);
+        return false;
+    }
+    if (_wcsicmp(PathFindFileNameW(image), PathFindFileNameW(g_sw.serverExe.c_str())) != 0) {
+        if (g_sw.ignoredLogged++ < 20) Log(L"host server: child pid %u is %ls - not the server, left alone", pid, image);
+        CloseHandle(proc);
+        return true;
+    }
+    if (!SameFile(image, g_sw.serverExe)) {
+        Log(L"!!!!! host server: pid %u is %ls, not %ls - left alone, it runs WITHOUT the payload !!!!!", pid, image, g_sw.serverExe.c_str());
+        CloseHandle(proc);
+        return true;
+    }
 
     // freeze it before anything else: whatever it has reached so far, it goes no further
     typedef LONG (NTAPI *NtSuspendResume)(HANDLE);
@@ -1311,7 +1385,8 @@ static void InjectHostServer(DWORD pid)
     auto suspend = nt ? (NtSuspendResume)(void*)GetProcAddress(nt, "NtSuspendProcess") : nullptr;
     auto resume  = nt ? (NtSuspendResume)(void*)GetProcAddress(nt, "NtResumeProcess") : nullptr;
     bool frozen = suspend && resume && suspend(proc) >= 0;
-    Log(L"host server: pid %u started by the game%ls", pid, frozen ? L", frozen" : L" (could not freeze it)");
+    Log(L"host server: pid %u %ls%ls", pid, early ? L"reported by the job as it starts" : L"taken from the process list (already running)",
+        frozen ? L", frozen" : L" (could not freeze it)");
 
     HANDLE thr = OpenMainThread(pid);
     bool held = thr && SuspendThread(thr) != (DWORD)-1;        // covers a first thread inserted after the freeze
@@ -1326,17 +1401,18 @@ static void InjectHostServer(DWORD pid)
         Log(L"!!!!! host server pid %u runs WITHOUT the payload - a hosted game will not work !!!!!", pid);
         if (thr) CloseHandle(thr);
         CloseHandle(proc);
-        return;
+        return true;
     }
 
     auto missingCount = [&]() { int n = 0; for (const auto& d : dlls) if (!IsModuleLoaded(proc, d)) ++n; return n; };
     auto exited = [&]() { DWORD code = 0; return GetExitCodeProcess(proc, &code) && code != STILL_ACTIVE; };
     int missing = (int)dlls.size();
-    for (int i = 0; i < 60 && missing && !exited(); ++i) { Sleep(50); missing = missingCount(); }
+    const int rounds = early ? 60 : 10;                        // x 50 ms: a server that is already running will not run the APCs
+    for (int i = 0; i < rounds && missing && !exited(); ++i) { Sleep(50); missing = missingCount(); }
     if (missing && !exited()) {
         // the APCs came too late for loader init: load what is missing now, with the main thread held
         // while that is possible (if it holds the loader lock the load cannot finish, so it is let go)
-        Log(L"host server: %d dll(s) not in after 3 s - loading them late", missing);
+        Log(L"host server: %d dll(s) not in after %d ms - loading them late", missing, rounds * 50);
         auto fn = LoadLibraryAddr();
         for (const auto& d : dlls) {
             if (!fn || IsModuleLoaded(proc, d)) continue;
@@ -1359,17 +1435,60 @@ static void InjectHostServer(DWORD pid)
     } else Log(L"host server: all %u dll(s) verified in pid %u", (unsigned)dlls.size(), pid);
     CloseHandle(thr);
     CloseHandle(proc);
+    return true;
+}
+
+// The process list: a server the game started that the job did not deliver (or there is no job).
+static void ServerScan()
+{
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    const wchar_t* serverName = PathFindFileNameW(g_sw.serverExe.c_str());
+    std::vector<DWORD> alive, found;
+    PROCESSENTRY32W pe{}; pe.dwSize = sizeof(pe);
+    if (Process32FirstW(snap, &pe)) do {
+        alive.push_back(pe.th32ProcessID);
+        if (_wcsicmp(pe.szExeFile, serverName) != 0) continue;
+        if (std::find(g_sw.handled.begin(), g_sw.handled.end(), pe.th32ProcessID) != g_sw.handled.end()) continue;
+        bool ours = pe.th32ParentProcessID == g_sw.gamePid;
+        if (!ours) {                                           // started through something else: ours if it began after the game
+            HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+            FILETIME c{}, x{}, k{}, u{};
+            if (h) { ours = GetProcessTimes(h, &c, &x, &k, &u) && FtU64(c) >= g_sw.started; CloseHandle(h); }
+            if (ours) Log(L"host server: pid %u was not started by the game itself (parent pid %u) but after it - treated as its server", pe.th32ProcessID, pe.th32ParentProcessID);
+        }
+        if (ours) { found.push_back(pe.th32ProcessID); continue; }
+        g_sw.handled.push_back(pe.th32ProcessID);
+        if (g_sw.strayLogged++ < 5)
+            Log(L"host server: %ls pid %u is not this game's server (parent pid %u; older than the game, or not readable) - left alone", serverName, pe.th32ProcessID, pe.th32ParentProcessID);
+    } while (Process32NextW(snap, &pe));
+    CloseHandle(snap);
+    // forget the pids that are gone, so a pid Windows uses again is looked at again
+    g_sw.handled.erase(std::remove_if(g_sw.handled.begin(), g_sw.handled.end(),
+                           [&](DWORD p) { return std::find(alive.begin(), alive.end(), p) == alive.end(); }),
+                       g_sw.handled.end());
+    for (DWORD pid : found) {
+        Log(L"host server: pid %u found in the process list - the job did not deliver it", pid);
+        g_sw.handled.push_back(pid);                           // one try from here: no retry every 250 ms
+        InjectHostServer(pid, false);
+    }
 }
 
 static DWORD WINAPI ServerWatchThread(LPVOID)
 {
     for (;;) {
         DWORD msg = 0; ULONG_PTR key = 0; LPOVERLAPPED ov = nullptr;
-        if (!GetQueuedCompletionStatus(g_sw.port, &msg, &key, &ov, INFINITE)) break;
+        if (!GetQueuedCompletionStatus(g_sw.port, &msg, &key, &ov, 250)) {
+            if (GetLastError() != WAIT_TIMEOUT) break;        // the port is gone
+            ServerScan();
+            continue;
+        }
         if (key == kSwKeyStop) break;
         if (key != kSwKeyJob || msg != JOB_OBJECT_MSG_NEW_PROCESS) continue;
         DWORD pid = (DWORD)(ULONG_PTR)ov;                      // job messages carry the pid here
-        if (pid && pid != g_sw.gamePid) InjectHostServer(pid);
+        if (!pid || pid == g_sw.gamePid) continue;
+        if (std::find(g_sw.handled.begin(), g_sw.handled.end(), pid) != g_sw.handled.end()) continue;
+        if (InjectHostServer(pid, true)) g_sw.handled.push_back(pid);
     }
     return 0;
 }
@@ -1394,25 +1513,32 @@ static void ServerWatchStart(HANDLE hGame, DWORD gamePid, const std::wstring& ex
     if (!g_cfg.waitForExit) { Log(L"host server: the launcher does not stay open (no-wait), so a hosted server will NOT get the payload"); return; }
     g_sw.gamePid = gamePid;
     g_sw.serverExe = exeDir + L"\\call_to_arms_server.exe";
-    g_sw.job = CreateJobObjectW(nullptr, nullptr);
+    { FILETIME now{}; GetSystemTimeAsFileTime(&now); g_sw.started = FtU64(now); }
     g_sw.port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
-    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;   // the only setting: nothing is limited
-    JOBOBJECT_ASSOCIATE_COMPLETION_PORT ap{ (PVOID)kSwKeyJob, g_sw.port };
-    bool ok = g_sw.job && g_sw.port
-           && SetInformationJobObject(g_sw.job, JobObjectExtendedLimitInformation, &li, sizeof(li))
-           && SetInformationJobObject(g_sw.job, JobObjectAssociateCompletionPortInformation, &ap, sizeof(ap))
-           && AssignProcessToJobObject(g_sw.job, hGame);
-    if (ok) {
-        g_sw.thread = CreateThread(nullptr, 0, ServerWatchThread, nullptr, 0, nullptr);
-        ok = g_sw.thread != nullptr;
-    }
-    if (!ok) {
-        Log(L"!!!!! host server: could not watch the game for its server (%ls) - a hosted server will NOT get the payload !!!!!", LastErrorText().c_str());
+    if (!g_sw.port) {
+        Log(L"!!!!! host server: no completion port (%ls) - a hosted server will NOT get the payload !!!!!", LastErrorText().c_str());
         ServerWatchStop();
         return;
     }
-    Log(L"host server: watching pid %u for %ls", gamePid, g_sw.serverExe.c_str());
+    g_sw.job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;   // the only setting: nothing is limited
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT ap{ (PVOID)kSwKeyJob, g_sw.port };
+    bool job = g_sw.job
+            && SetInformationJobObject(g_sw.job, JobObjectExtendedLimitInformation, &li, sizeof(li))
+            && SetInformationJobObject(g_sw.job, JobObjectAssociateCompletionPortInformation, &ap, sizeof(ap))
+            && AssignProcessToJobObject(g_sw.job, hGame);
+    std::wstring jobErr = job ? std::wstring() : LastErrorText();
+    if (!job && g_sw.job) { CloseHandle(g_sw.job); g_sw.job = nullptr; }
+    g_sw.thread = CreateThread(nullptr, 0, ServerWatchThread, nullptr, 0, nullptr);
+    if (!g_sw.thread) {
+        Log(L"!!!!! host server: could not start the watch thread (%ls) - a hosted server will NOT get the payload !!!!!", LastErrorText().c_str());
+        ServerWatchStop();
+        return;
+    }
+    if (job) Log(L"host server: watching pid %u for %ls (job, and the process list every 250 ms)", gamePid, g_sw.serverExe.c_str());
+    else     Log(L"host server: the game could not be put in a job (%ls) - watching pid %u for %ls through the process list only, the payload goes in late",
+                 jobErr.c_str(), gamePid, g_sw.serverExe.c_str());
 }
 
 // Starts `exe` suspended, injects, resumes, verifies. On success returns 0 and hands back the

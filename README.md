@@ -6,6 +6,9 @@ changed: start the game from Steam and it is untouched.
 
 The DLLs are sealed into the exe. Players download one `Indomitus.exe`, put it anywhere, and run it.
 Every player in a multiplayer match needs the same launcher build (the code is shown in the window).
+In a lobby the game says so itself: the launcher passes its version and build code to the game
+(`INDOMITUS_LAUNCHER_VERSION`, `INDOMITUS_PAYLOAD`), `gem_lobbycheck` publishes them in the Steam lobby
+and shows a message box when the host and a player differ.
 
 ## What it does on start
 
@@ -73,6 +76,7 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_crewvoice` | `_indomitus_DLL_crewvoice\src` | voice lines for vehicles without a crew |
 | `gem_fauna` | `_indomitus_DLL_fauna` | creature units behave like infantry squads |
 | `gem_itempen` | `_indomitus_DLL_itempierce` | rounds that pierce a worn item carry on into the wearer |
+| `gem_lobbycheck` | `_indomitus_DLL_lobbycheck` | multiplayer: a message when host and players run different launcher builds |
 | `gem_meleechase` | `_indomitus_DLL_meleechase` | fauna and vehicles chase melee targets |
 | `gem_meleestance` | `_indomitus_DLL_meleestance` | melee stance, charge and auto-draw |
 | `gem_noprone` | `_indomitus_DLL_gem_noprone\source` | `cannot_lie` units never go prone by AI decision |
