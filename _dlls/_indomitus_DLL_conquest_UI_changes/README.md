@@ -1,4 +1,10 @@
-# GEM ConquestUI 0.4.2
+# GEM ConquestUI 0.4.3
+
+**0.4.3:** game 1.068. That update renumbered the engine's GUI events and rewrote two campaign-view functions, so
+0.4.2 found neither the library guard nor the portrait panels there and switched the unit preview, the guard and the
+SHOW LOCKED / HIDE LOCKED button off. The two scene events are now read from the library's own event handler (told
+apart by what their handlers do, not by their numbers), and the panel `Refresh` and view `Update` are recognised in
+both forms. Works on 1.067 and 1.068; no change in behaviour.
 
 **0.4.2:** the zoom needs Ctrl by default (`zoom_modifier=ctrl`). The plain wheel scrolls the research tree as in
 vanilla again; Ctrl+wheel zooms. Set `zoom_modifier=` (empty) for the old behaviour.
@@ -43,7 +49,7 @@ mod uses the vanilla layout names. The `research_tree_layout` / `overview_layout
 **0.1.1:** This release makes the research tree inspector safe; see "Why the developers commented the inspector out"
 below. It adds a library guard, and a launcher-only layout rename that 0.1.3 removed again.
 
-Dynamic Campaign ("Conquest") UI extension for Call to Arms - Gates of Hell 1.067, injected by the Indomitus
+Dynamic Campaign ("Conquest") UI extension for Call to Arms - Gates of Hell 1.067 / 1.068, injected by the Indomitus
 Launcher (`launcher\payload\`). It only touches the UI, never the simulation, so it is safe in co-op campaigns.
 Only `call_to_arms.exe` has this UI: in the editor and the dedicated server the DLL writes one log line and does nothing.
 
@@ -156,7 +162,7 @@ How 0.1.1 fixes it:
 The log `gem_conquestui.log` sits in the launcher's payload folder under `%LocalAppData%\Indomitus Launcher\payload\<fp>\`.
 It should start like this:
 ```
-GEM ConquestUI 0.4.2 loaded into call_to_arms.exe (timestamp 6AB3DCC7)
+GEM ConquestUI 0.4.3 loaded into call_to_arms.exe (timestamp 6AFB1AA3)
 library guard                  ON
 research tree preview          ON
 research tree zoom             ON (ctrl+wheel, 40%-150%, 150 ms between levels)

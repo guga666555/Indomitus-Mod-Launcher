@@ -1,5 +1,5 @@
 /*
- * GEM ConquestUI 0.4.2  -  Call to Arms: Gates of Hell (GEM engine, 1.067), Dynamic Campaign ("Conquest") UI
+ * GEM ConquestUI 0.4.3  -  Call to Arms: Gates of Hell (GEM engine, 1.067 and 1.068), Dynamic Campaign ("Conquest") UI
  *
  *   1. Research tree unit preview
  *      Clicking a unit node in the campaign research tree shows that unit in an inspector panel under the
@@ -47,7 +47,7 @@
  *   eGUI_CampaignResearchTree: vt[34] Notify (7/8 = icon clicks), vt[62] Close, vt[69] Bind, owner view +0x1E8,
  *     unitsContainer +0x230. eGUI_CampaignResearchIcon: research node +0x2E0 (byte 0 = unit), state +0x2E8
  *     (1 = researched), vt[73] "is disabled" (= researched), vt[86] state-frame map.
- *   eGUI_MultiplayerLibrary: vt[1] OnEvent (0xFB6, 0x101D = 3D scene ready), vt[73] Start, vt[74] Clear,
+ *   eGUI_MultiplayerLibrary: vt[1] OnEvent (1.067: 0xFB6, 0x101D = 3D scene ready; 1.068: 0xFB8, 0x101F), vt[73] Start, vt[74] Clear,
  *     vt[75] SetContext(Tag*), ShowTemplate(lib, template), +0x298 scene ready, +0x310 shown template.
  *   Unit template by name: ConfigLookup(Tag(name)).
  *   Research tree zoom: eDialog position +0x98, size +0xA0, preferred/min/max size +0x120/+0x128/+0x130, vt[14]
@@ -74,7 +74,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define CU_VERSION "0.4.2"
+#define CU_VERSION "0.4.3"
 #define CU_NAME    "GEM ConquestUI"
 #define CU_INI     L"\\gem_conquestui.ini"
 #define CU_LOG     L"\\gem_conquestui.log"
@@ -229,6 +229,13 @@ static int fn_is(const void *f, const char *pat, const char *what)
     return 1;
 }
 
+/* the same check without a log line: for code that has more than one known form */
+static int fn_like(const void *f, const char *pat)
+{
+    Sig s;
+    return f && in_text(f) && sig_parse(pat, &s) && sig_match((const uint8_t *)f, &s);
+}
+
 static uint32_t rd32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static uint8_t *rel32_target(const uint8_t *ins, int disp_at, int ins_len) { return (uint8_t *)ins + ins_len + (int32_t)rd32(ins + disp_at); }
 
@@ -381,8 +388,10 @@ enum { EV_ID = 0x08, EV_SENDER = 0x10, EV_ARG = 0x38 };
 enum {
     NOTIFY_ON_CLICK = 7,                               /* AddNotifyMapping command: the source was clicked */
     TREE_ICON_TOGGLE = 7, TREE_ICON_DESELECT = 8,      /* research tree Notify codes of its icons */
-    EV_SCENE_UNLOAD = 0xFB6, EV_SCENE_READY = 0x101D,  /* library scene events (checked by find_library_guard) */
 };
+/* library scene events. The engine renumbers its events from one game build to the next (1.067: 0xFB6 / 0x101D,
+   1.068: 0xFB8 / 0x101F), so they are read from the library's own OnEvent (find_library_events); 0 = not known. */
+static uint32_t EV_SCENE_UNLOAD, EV_SCENE_READY;
 
 /* offsets, re-derived by the finders; O_DLG_FLAGS is fixed because every finder pattern hard-codes it */
 enum { O_DLG_FLAGS = 0x48 };
@@ -579,15 +588,22 @@ static int find_research_preview(void)
 
 static int find_portraits(void)
 {
-    /* panel Refresh (shared by the 3 classes): sub rsp,48 ; ... mov r14,rcx ; mov rcx,[rcx+WRAP] ; mov eax,[rcx+48] ; test al,10 */
-    for (int i = 0; i < 3; i++)
-        if (!fn_is(V_PANEL[i][SL_PANEL_REFRESH], "48 83 EC 48 48 89 5C 24 58 48 89 7C 24 40 4C 89 74 24 38 4C 8B F1 48 8B 89 ?? ?? ?? ?? 8B 41 48 A8 10", PANEL_NAMES[i])) return 0;
-    uint8_t *rf = (uint8_t *)V_PANEL[0][SL_PANEL_REFRESH];
-    O_PANEL_WRAP = rd32(rf + 25);
-    /* mov rax,[r14+PAIRS+8] ; lea r15,[r14+PAIRS] */
+    /* panel Refresh (shared by the 3 classes). After its prologue: mov rcx,[rcx+WRAP] ; mov eax,[rcx+48] ; test al,10.
+       1.067 walks the pairs vector for every unit (this = r14); 1.068 first puts the pairs into a hash map (this = r12). */
+    uint8_t *rf = (uint8_t *)V_PANEL[0][SL_PANEL_REFRESH], *wr = NULL;
+    for (int i = 0; i < 3; i++) {
+        uint8_t *f = (uint8_t *)V_PANEL[i][SL_PANEL_REFRESH];
+        uint8_t *w = f && in_text(f) ? scan(f, 0x40, "48 8B 89 ?? ?? ?? ?? 8B 41 48 A8 10", NULL) : NULL;
+        if (!w || (wr && rd32(w + 3) != rd32(wr + 3))) { logf_("  %s: code at exe+0x%llX not recognised", PANEL_NAMES[i], f ? EXE_OFF(f) : 0ULL); return 0; }
+        if (!wr) wr = w;
+    }
+    O_PANEL_WRAP = rd32(wr + 3);
+    /* 1.067: mov rax,[r14+PAIRS+8] ; lea r15,[r14+PAIRS]
+       1.068: lea r15,[r12+PAIRS] ; xorps xmm0,xmm0 ; mov rcx,[r15+8] ; sub rcx,[r15] ; sar rcx,4 (16-byte pairs) */
     uint8_t *pr = scan(rf, 0x100, "49 8B 86 ?? ?? ?? ?? 4D 8D BE ?? ?? ?? ??", NULL);
-    if (!pr || rd32(pr + 3) != rd32(pr + 10) + 8) { logf_("  panel portrait vector not recognised"); return 0; }
-    O_PANEL_PAIRS = rd32(pr + 10);
+    if (pr && rd32(pr + 3) == rd32(pr + 10) + 8) O_PANEL_PAIRS = rd32(pr + 10);
+    else if ((pr = scan(rf, 0x100, "4D 8D BC 24 ?? ?? ?? ?? 0F 57 C0 49 8B 4F 08 49 2B 0F 48 C1 F9 04", NULL)) != NULL) O_PANEL_PAIRS = rd32(pr + 4);
+    else { logf_("  panel portrait vector not recognised"); return 0; }
     /* UpdatePortrait: ... call SetUnlocked(portrait, researched) = mov rax,[rcx] ; mov [rcx+UNLOCKED],dl ; rex.w jmp [rax+REPAINT] */
     uint8_t *up = (uint8_t *)V_PANEL[0][SL_PANEL_UPDATEPORTRAIT];
     if (!fn_is(up, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC ?? 48 8B 9A", "Panel::UpdatePortrait")) return 0;
@@ -605,8 +621,11 @@ static int find_portraits(void)
     O_PORTRAIT_REVEAL = rd32(sr + 8);
     /* view Update refreshes its 3 panels: mov rcx,[rdi+PANEL] ; test rcx,rcx ; je ; mov rax,[rcx] ; call [rax+REFRESH*8] (x3) */
     uint8_t *vu = (uint8_t *)V_VIEW[SL_VIEW_UPDATE];
-    if (!fn_is(vu, "40 55 53 57 41 55 41 57 48 8D AC 24", "DynamicCampaignView::Update")) return 0;
-    uint8_t *p3 = scan(vu, 0xC00, "48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00 48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00 48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00", NULL);
+    /* prologue: 1.067 push rbp,rbx,rdi,r13,r15 ; lea rbp,[rsp-..]   1.068 mov [rsp+20],rbx ; push rbp,rsi,rdi,r12..r15 ; lea rbp,[rsp-..]
+       (1.068 does more before it reaches the panels: they are 0xC56 bytes in, 0x9F7 in 1.067) */
+    if (!fn_like(vu, "40 55 53 57 41 55 41 57 48 8D AC 24") &&
+        !fn_is(vu, "48 89 5C 24 20 55 56 57 41 54 41 55 41 56 41 57 48 8D AC 24", "DynamicCampaignView::Update")) return 0;
+    uint8_t *p3 = scan(vu, 0x1800, "48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00 48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00 48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 FF 90 48 02 00 00", NULL);
     if (!p3) { logf_("  view panel members not found"); return 0; }
     for (int i = 0; i < 3; i++) O_VIEW_PANEL[i] = rd32(p3 + 3 + 21 * i);
     if (!fn_is(V_VIEW[SL_NOTIFY], "48 89 5C 24 18 48 89 7C 24 20 55 48 8D 6C 24 ?? 48 81 EC ?? ?? ?? ?? 8B 42 08", "DynamicCampaignView::Notify")) return 0;
@@ -682,15 +701,34 @@ static int find_zoom(void)
 static uint32_t g_libEngineEvents[4];
 static AnyFn g_dialogOnEvent;
 
-static int find_library_guard(void)
+/* The 4 events of MultiplayerLibrary::OnEvent, read from its compare chain, and which of them are "scene unload" and
+   "scene ready". Told apart by what their handlers do, not by their numbers (the numbers change with the game build):
+     unload (2nd): je -> ... mov byte [rbx+READY],0 ... engine Clear
+     ready  (4th): cmp dword [rdx+38],1 ; jne ; xor r8d,r8d ; mov edx,<its own id> ; ... mov byte [rbx+READY],1 */
+static int g_okEvents;
+static int find_library_events(void)
 {
     /* mov [rsp+8],rbx ; push rdi ; sub rsp,20 ; mov rbx,rcx ; mov rdi,rdx ; mov ecx,[rdx+8] ; sub ecx,A ; je ; sub ecx,B ; je ;
-       sub ecx,C ; je ; cmp ecx,D ; jne ; cmp dword [rdx+38],1 ... ; tail: mov rdx,rdi ; mov rcx,rbx ; ... ; pop rdi ; jmp eDialog::OnEvent */
+       sub ecx,C ; je ; cmp ecx,D ; jne ; cmp dword [rdx+38],1 ; jne ; xor r8d,r8d ; mov edx,A+B+C+D */
     uint8_t *f = (uint8_t *)V_LIB[SL_ONEVENT];
-    if (!fn_is(f, "48 89 5C 24 08 57 48 83 EC 20 48 8B D9 48 8B FA 8B 4A 08 81 E9 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 81 E9 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 83 E9 ?? 0F 84 ?? ?? ?? ?? 83 F9 ?? 0F 85", "MultiplayerLibrary::OnEvent (guard)")) return 0;
+    if (!fn_is(f, "48 89 5C 24 08 57 48 83 EC 20 48 8B D9 48 8B FA 8B 4A 08 81 E9 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 81 E9 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 83 E9 ?? 0F 84 ?? ?? ?? ?? 83 F9 ?? 0F 85 ?? ?? ?? ?? 83 7A 38 01 0F 85 ?? ?? ?? ?? 45 33 C0 BA", "MultiplayerLibrary::OnEvent")) return 0;
     uint32_t a = rd32(f + 21), b = rd32(f + 33); uint8_t c = f[45], d = f[54];
     g_libEngineEvents[0] = a; g_libEngineEvents[1] = a + b; g_libEngineEvents[2] = a + b + c; g_libEngineEvents[3] = a + b + c + d;
-    if (g_libEngineEvents[1] != EV_SCENE_UNLOAD || g_libEngineEvents[3] != EV_SCENE_READY) { logf_("  library events not the expected ones"); return 0; }
+    if (rd32(f + 75) != g_libEngineEvents[3]) { logf_("  library OnEvent: the 4th event is not the scene-ready one"); return 0; }
+    /* the 2nd event's handler clears the ready flag: C6 83 <disp32> 00 within its first bytes */
+    uint8_t *h = rel32_target(f + 37, 2, 6), *z = in_text(h) ? scan(h, 0x20, "C6 83 ?? ?? ?? ?? 00", NULL) : NULL;
+    /* the 4th sets the same flag: C6 83 <disp32> 01 */
+    uint8_t *o = scan(f + 79, 0x30, "C6 83 ?? ?? ?? ?? 01", NULL);
+    if (!z || !o || rd32(z + 2) != rd32(o + 2)) { logf_("  library OnEvent: the scene unload / ready handlers are not the expected ones"); return 0; }
+    EV_SCENE_UNLOAD = g_libEngineEvents[1]; EV_SCENE_READY = g_libEngineEvents[3];
+    return 1;
+}
+
+static int find_library_guard(void)
+{
+    /* tail: mov rdx,rdi ; mov rcx,rbx ; ... ; pop rdi ; jmp eDialog::OnEvent */
+    uint8_t *f = (uint8_t *)V_LIB[SL_ONEVENT];
+    if (!g_okEvents) return 0;
     uint8_t *t = scan(f, 0x200, "48 8B D7 48 8B CB 48 8B 5C 24 30 48 83 C4 20 5F E9", NULL);
     void **vd = find_vtable_rtti(".?AVeDialog@@");
     if (!t || !vd || rel32_target(t + 16, 1, 5) != (uint8_t *)vd[SL_ONEVENT]) { logf_("  library OnEvent does not forward to eDialog::OnEvent"); return 0; }
@@ -715,10 +753,11 @@ static int find_all(void)
         if (!(*classes[i].vt = find_vtable_rtti(dec))) { logf_("  class %s not found", classes[i].cls); all = 0; }
     }
     if (!all) return 0;
+    g_okEvents = find_library_events();
     g_okCommon = find_dialog_common();
     g_okButtons = g_okCommon && find_button_support();
     g_okTree = g_okCommon && find_tree();
-    g_okPreview = g_okTree && find_research_preview();
+    g_okPreview = g_okTree && g_okEvents && find_research_preview();   /* the preview follows the library's scene events */
     g_okZoom = g_okTree && find_zoom();
     g_okPortraits = g_okCommon && find_portraits();
     g_okGuard = find_library_guard();

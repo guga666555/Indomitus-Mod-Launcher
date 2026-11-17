@@ -143,6 +143,7 @@ static int find_vitality(void)
    (mov dword [rsp+0x20],1 -> 0, the __RTDynamicCast isReference argument) and the SetStaminaMovementModeLimit call
    redirected to a wrapper that skips a NULL chassis. The client-side path calls a base-class virtual and is fine. */
 static uint8_t *g_vitCastFlag, *g_vitSetLimitSite; static void *g_vitSetLimitFn; static uint32_t g_footLimitOff;
+static int g_vitEngineSafe;           /* 1.068: the engine's own cast no longer throws on another chassis */
 static int find_vitality_chassis(void)
 {
     static const char lbl[] = "eChassisFoot::SetStaminaMovementModeLimit";
@@ -156,18 +157,26 @@ static int find_vitality_chassis(void)
         if (p[0] != 0xE8 || p + 5 + *(int32_t *)(p + 1) != setLimit) continue;
         uint32_t f = func_of(p);
         if (!f || p - (g_base + f) < 0x200) continue;                /* not the network command's read handler */
-        /* ... mov dword [rsp+0x20],1 ... call __RTDynamicCast ; mov rcx,rax ; xor r8d,r8d ; mov edx,ebx ; call SetLimit */
-        if (memcmp(p - 8, "\x48\x8B\xC8\x45\x33\xC0\x8B\xD3", 8) || p[-13] != 0xE8) continue;
-        uint8_t *flag = NULL;
-        for (uint8_t *q = p - 0x50; q < p - 13; q++) if (!memcmp(q, "\xC7\x44\x24\x20\x01\x00\x00\x00", 8)) flag = q;
-        if (!flag) continue;
-        n++; g_vitCastFlag = flag + 4; g_vitSetLimitSite = p; g_vitSetLimitFn = setLimit;
+        /* 1.067: ... mov dword [rsp+0x20],1 ... call __RTDynamicCast ; mov rcx,rax ; xor r8d,r8d ; mov edx,ebx ; call SetLimit */
+        if (!memcmp(p - 8, "\x48\x8B\xC8\x45\x33\xC0\x8B\xD3", 8) && p[-13] == 0xE8) {
+            uint8_t *flag = NULL;
+            for (uint8_t *q = p - 0x50; q < p - 13; q++) if (!memcmp(q, "\xC7\x44\x24\x20\x01\x00\x00\x00", 8)) flag = q;
+            if (!flag) continue;
+            n++; g_vitCastFlag = flag + 4; g_vitSetLimitSite = p; g_vitSetLimitFn = setLimit;
+        }
+        /* 1.068: the engine casts to a pointer and skips a chassis that is no foot chassis itself:
+           call __RTDynamicCast ; ... ; test rax,rax ; je skip ; xor r8d,r8d ; mov edx,r14d ; mov rcx,rax ; call SetLimit
+           -> nothing to patch in the cast, only the call is wrapped (the limit applied to a moving fauna) */
+        else if (!memcmp(p - 14, "\x48\x85\xC0\x74", 4) && !memcmp(p - 9, "\x45\x33\xC0", 3) && !memcmp(p - 3, "\x48\x8B\xC8", 3)) {
+            n++; g_vitCastFlag = NULL; g_vitSetLimitSite = p; g_vitSetLimitFn = setLimit; g_vitEngineSafe = 1;
+        }
     }
     if (n != 1) { logf_("vitality chassis: timer site not recognised (%d matches)", n); return 0; }
     for (uint8_t *q = setLimit; q < setLimit + 0x60 && !g_footLimitOff; q++)           /* cmp [rbx+LIMIT],edi */
         if (q[0] == 0x39 && q[1] == 0xBB && q[4] == 0 && q[5] == 0 && q[6] == 0x0F && q[7] == 0x84) g_footLimitOff = *(uint32_t *)(q + 2);
     if (!g_footLimitOff) logf_("vitality chassis: stamina limit field not recognised - an exhausted fauna slows only at its next move");
-    logf_("vitality chassis: vitality timer cast flag @ exe+0x%llX, SetStaminaMovementModeLimit call @ exe+0x%llX (limit +0x%X)", EXE_OFF(g_vitCastFlag), EXE_OFF(g_vitSetLimitSite), g_footLimitOff);
+    if (g_vitEngineSafe) logf_("vitality chassis: this game build skips a non-foot chassis itself; SetStaminaMovementModeLimit call @ exe+0x%llX (limit +0x%X)", EXE_OFF(g_vitSetLimitSite), g_footLimitOff);
+    else logf_("vitality chassis: vitality timer cast flag @ exe+0x%llX, SetStaminaMovementModeLimit call @ exe+0x%llX (limit +0x%X)", EXE_OFF(g_vitCastFlag), EXE_OFF(g_vitSetLimitSite), g_footLimitOff);
     return 1;
 }
 #ifndef FX_TEST
@@ -187,8 +196,8 @@ static void fx_set_stamina_limit(void *chassis, int limit, uint8_t force)
 static int install_vitality_chassis(void)
 {
     uint8_t zero = 0;
-    return patch_code(g_vitCastFlag, &zero, 1, "vitality chassis (cast flag)")
-        && redirect_call(g_vitSetLimitSite, (void *)fx_set_stamina_limit, NULL, "vitality chassis (limit call)");
+    if (g_vitCastFlag && !patch_code(g_vitCastFlag, &zero, 1, "vitality chassis (cast flag)")) return 0;   /* 1.067 only */
+    return redirect_call(g_vitSetLimitSite, (void *)fx_set_stamina_limit, NULL, "vitality chassis (limit call)");
 }
 #endif
 
@@ -208,10 +217,17 @@ static int find_stamina_fields(void)
         uint32_t f = func_of(p);
         if (!f || p - (g_base + f) < 0x200) continue;                /* the command's read handler is short */
         uint32_t maxo = 0, curo = 0;
-        for (uint8_t *q = g_base + f; q + 8 < p; q++) {
-            if (q[0] == 0x4C && q[1] == 0x8D && q[2] == 0xA7) maxo = *(uint32_t *)(q + 3);               /* lea r12,[rdi+X] */
-            if (q[0] == 0xF3 && q[1] == 0x0F && q[2] == 0x58 && (q[3] & 0xC7) == 0x87) curo = *(uint32_t *)(q + 4);   /* addss xmm,[rdi+X] */
-            if (maxo && curo == maxo + 4) { g_stamMaxOff = maxo; g_stamCurOff = curo; break; }
+        /* 1.067: lea r12,[rdi+MAX] ... addss xmm,[rdi+MAX+4]     1.068: lea rax,[rsi+MAX] ; ... addss xmm,[rsi+MAX+4]
+           (this = rdi or rsi; the lea and the addss use the same register and sit a few instructions apart, in either
+           order: the editor has the addss first) */
+        for (uint8_t *q = g_base + f + 0x20; q + 8 < p; q++) {
+            if ((q[0] != 0x48 && q[0] != 0x4C) || q[1] != 0x8D || (q[2] & 0xC0) != 0x80) continue;      /* lea r64,[base+disp32] */
+            int base = q[2] & 7; if (base != 6 && base != 7) continue;                                  /* rsi / rdi */
+            uint32_t m = *(uint32_t *)(q + 3);
+            if (m < 0x40 || m > 0x400) continue;
+            for (uint8_t *r = q - 0x20; r < q + 7 + 0x20; r++)
+                if (r[0] == 0xF3 && r[1] == 0x0F && r[2] == 0x58 && (r[3] & 0xC7) == (0x80 | base) && *(uint32_t *)(r + 4) == m + 4) { maxo = m; curo = m + 4; break; }
+            if (maxo) { g_stamMaxOff = maxo; g_stamCurOff = curo; break; }
         }
     }
     if (!g_stamMaxOff) { logf_("stamina: vitality stamina fields not recognised (no stamina bar)"); return 0; }

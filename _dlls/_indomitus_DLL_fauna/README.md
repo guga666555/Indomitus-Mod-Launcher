@@ -280,7 +280,8 @@ for any other chassis - followed by `eChassisFoot::SetStaminaMovementModeLimit(l
 and `{Chassis "human_carrier"}` (the Carnifex), wheel or track was a fatal error on its first tick. GEM Fauna flips the
 cast's throw flag (the `isReference` argument, 1 -> 0) and redirects the SetStaminaMovementModeLimit call to a wrapper
 that skips a NULL chassis. The client-side path of the same function calls a base-class virtual every chassis has.
-Stamina limits still work on foot chassis; a non-foot chassis simply has no stamina speed limit. Finder: the
+Game 1.068 fixed this in the engine (a pointer cast and a NULL test before the call), so there GEM Fauna only wraps the
+call. Stamina limits still work on foot chassis; a non-foot chassis simply has no stamina speed limit. Finder: the
 SetStaminaMovementModeLimit call inside the timer (the function longer than 0x200 bytes), preceded by
 `mov rcx,rax ; xor r8d,r8d ; mov edx,ebx` and the `mov dword [rsp+0x20],1` within 0x50 bytes before it.
 
@@ -311,6 +312,15 @@ out. The fauna's FSM must have the vehicle "crush" transition (the vehicle FSM h
 `dodge: fauna ... runs the vehicle crush check` the first time it is evaluated for a fauna.
 
 ## History
+- 0.12.1 - game 1.068 (works on 1.067 too; no change in behaviour). That update moved things the finders had fixed:
+  the foot chassis got a virtual in the middle of its vtable and a 4-byte field before its request "kind"
+  (SetMovementMode slot 44 -> 45, kind +0x468 -> +0x46C), `Inventory::eOperation` went from 11 to 16 virtuals (the
+  UseItem process step is slot 14 instead of 9), network commands got two virtuals before "set target" (slot 5 -> 7),
+  and the vitality timer keeps `this` in rsi instead of rdi. 0.12.0 therefore lost the sprint, the direct-control
+  contact, the stamina bar, the bandages and the automatic bandage on 1.068. The step and the set-target slot are now
+  found by their code, the register and field distances are no longer assumed. 1.068 also casts the chassis to a
+  pointer in the vitality timer and skips a non-foot chassis itself, so "vitality on any chassis" no longer patches the
+  cast there (log: `this game build skips a non-foot chassis itself`); the limit call is still wrapped.
 - 0.12.0 - AI fauna get out of the way of bigger moving units (size props), through the vehicle AI's crush reaction
   (`fauna_dodge*`).
 - 0.11.0 - direct control: the soldier collision step tests obstacles with the fauna's own pather class instead of

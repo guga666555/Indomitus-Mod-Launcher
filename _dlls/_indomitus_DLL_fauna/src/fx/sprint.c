@@ -51,8 +51,11 @@ static int find_fauna_sprint(void)
             uint32_t off = *(uint32_t *)(q + 2), imm = *(uint32_t *)(q + 6);
             if (off < 0x300 || off > 0x800) continue;
             if (imm == 0 && g_footModeSlot < 0) {
-                for (uint8_t *r = f; r < q; r++)                        /* the mode store right before it */
-                    if (r[0] == 0x89 && (r[1] & 0xC0) == 0x80 && (r[1] & 7) == (q[1] & 7) && *(uint32_t *)(r + 2) == off - 8) { g_footModeSlot = s; kindM = off; break; }
+                for (uint8_t *r = f; r < q; r++) {                      /* the mode store right before it: REQ = KIND - 8 (1.067), KIND - 0xC (1.068) */
+                    if (r[0] != 0x89 || (r[1] & 0xC0) != 0x80 || (r[1] & 7) != (q[1] & 7) || r + 6 != q) continue;
+                    uint32_t req = *(uint32_t *)(r + 2);
+                    if (req + 8 == off || req + 0xC == off) { g_footModeSlot = s; kindM = off; break; }
+                }
             } else if (imm == 1 && g_footSpeedSlot < 0) { g_footSpeedSlot = s; kindS = off; }
             break;
         }

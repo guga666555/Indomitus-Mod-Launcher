@@ -3,11 +3,11 @@
  *
  * Double-clicking an item in a unit's inventory window queues the engine's "UseItem" inventory operation
  * (Inventory::eOperation_UseItem; the window's click handler is GameControl::eInventoryBoxView slot 39, which needs
- * the owner alive and "operatable", entity+0xDB4 bit 8). The operation's process step (vtable slot 9) runs once
- * with its state == 1: for a human and a "bandage" item it gives the self-bandage order; a vehicle-class owner
+ * the owner alive and "operatable", entity+0xDB4 bit 8). The operation's process step (vtable slot 9 in game 1.067,
+ * slot 14 in 1.068: found by its code, see find_bandage_op) runs once with its state == 1: for a human and a "bandage" item it gives the self-bandage order; a vehicle-class owner
  * (so a fauna unit) only gets the "load into a vehicle holder" path, so nothing happens.
  *
- * GEM Fauna wraps slot 9: when the owner is fauna and the item's class tags hold "bandage", one bandage is taken out
+ * GEM Fauna wraps that step: when the owner is fauna and the item's class tags hold "bandage", one bandage is taken out
  * of the inventory (the engine's RemoveMany, as the console "inventory remove" command does) and the unit is healed
  * by fauna_bandage_heal_percent of its max health (the engine's HealPercent, the same call the medic "care" action
  * uses: capped at max, fires the health-changed event for the HUD). At full health nothing is used.
@@ -39,12 +39,13 @@ typedef void    *(*RemoveManyFn)(void *view, void *defCount);       /* {def, int
 typedef void     (*ViewResetFn)(void *view);
 typedef float    (*HealPctFn)(void *entity, float percent);         /* returns the percent actually applied */
 typedef uint64_t (*BoxClickFn)(void *view, void *event);
-typedef void    *(*CmdTargetFn)(void *cmd, void *entity);           /* command vt[5]: set target entity, returns cmd */
+typedef void    *(*CmdTargetFn)(void *cmd, void *entity);           /* command "set target entity", returns cmd: vt[5] in 1.067,
+                                                                       vt[7] in 1.068 (g_cmdTargetSlot, read from the engine's sender) */
 typedef void     (*CmdFn)(void *cmd);                               /* command vt[1] send / vt[4] execute */
 typedef void     (*TagsCopyFn)(void *dst, const void *src);
 typedef void     (*TagsDtorFn)(void *tags);
 
-static void   **g_vtUseItem; static OpTickFn g_useItemOrig;
+static void   **g_vtUseItem; static OpTickFn g_useItemOrig; static int g_useItemSlot = -1;
 static uint32_t g_opStateOff, g_opUserOff, g_opViewOff, g_defTagsOff, g_cellCountOff, g_cellHolderOff;
 static BoolFn   g_isNet;
 static HasTagFn g_hasTag;
@@ -58,7 +59,7 @@ static void   **g_vtBoxView; static BoxClickFn g_boxClickOrig; static uint32_t g
 static int g_okBandage, g_bandagePct = 15;
 /* multiplayer (find_bandage_net) */
 static BoolFn   g_isClient;
-static void   **g_vtRemoveCmd; static uint32_t g_removeCmdId, g_removeCmdTagsOff, g_removeCmdCountOff;
+static void   **g_vtRemoveCmd; static uint32_t g_removeCmdId, g_removeCmdTagsOff, g_removeCmdCountOff; static int g_cmdTargetSlot = -1;
 static TagsCopyFn g_tagsCopy; static TagsDtorFn g_tagsDtor;
 static void   **g_vtMedkitCmd; static uint32_t g_medkitCmdId, g_entNetIdOff; static CmdFn g_medkitExecOrig;
 static int g_okBandageNet;
@@ -91,17 +92,27 @@ static int find_bandage_op(void)
 {
     g_vtUseItem = find_vtable_rtti(".?AUeOperation_UseItem@Inventory@@");
     if (!g_vtUseItem || !g_tagBandage) { logf_("bandage: UseItem operation %s", g_vtUseItem ? "ok, but no static Tag 'bandage'" : "class not found"); return 0; }
-    uint8_t *f = (uint8_t *)g_vtUseItem[9], *p, *s;
-    if (!in_text(f)) { logf_("bandage: UseItem slot 9 not code"); return 0; }
-    for (p = f; p < f + 0x30; p++) if (p[0] == 0x83 && p[1] == 0xB9 && p[6] == 0x01) break;      /* cmp dword [rcx+imm32],1 */
-    if (p >= f + 0x30) { logf_("bandage: UseItem state test not recognised"); return 0; }
+    /* the process step: the slot whose code starts with the state test and uses the Tag 'bandage'. The game moved it
+       (slot 9 in 1.067, slot 14 in 1.068, where Inventory::eOperation has 16 virtuals instead of 11), so it is searched */
+    uint8_t *f = NULL, *p = NULL, *s;
+    for (int k = 1; k < 24 && !f; k++) {
+        uint8_t *c = (uint8_t *)g_vtUseItem[k];
+        if (!in_text(c)) break;                                                                   /* end of the vtable */
+        uint32_t fo = func_of(c);
+        if (!fo || g_base + fo != c) continue;                     /* the step has a stack frame; the small getters next to it have none */
+        for (p = c; p < c + 0x30; p++) if (p[0] == 0x83 && p[1] == 0xB9 && p[6] == 0x01) break;      /* cmp dword [rcx+imm32],1 */
+        if (p >= c + 0x30) continue;
+        for (s = c; s < c + 0x500; s++)
+            if (s[0] == 0x48 && s[1] == 0x8D && s[2] == 0x15 && s + 7 + *(int32_t *)(s + 3) == g_tagBandage && func_of(s) == fo) { f = c; g_useItemSlot = k; break; }
+    }
+    if (!f) { logf_("bandage: UseItem process step not recognised (no slot tests the state and the bandage tag)"); return 0; }
     g_opStateOff = *(uint32_t *)(p + 2);
     g_isNet = (BoolFn)next_fn_call(p + 7, 0x10, NULL);
-    /* the op's item view: the first 'lea rcx,[r64+disp8]' (no SIB) followed by a call; the next calls on the same view
-       are IsEmpty, GetDef, Current, in that order */
+    /* the op's item view: the first 'lea rcx,[r64+disp8]' (no SIB, not a stack local: 1.068 addresses its locals through
+       rbp) followed by a call; the next calls on the same view are IsEmpty, GetDef, Current, in that order */
     uint8_t *fns[3] = { 0 }; int nf = 0; int view = -1; uint8_t *getDefSite = NULL;
     for (p = f; p < f + 0x400 && nf < 3; p++) {
-        if (p[0] != 0x48 || p[1] != 0x8D || (p[2] & 0xF8) != 0x48 || (p[2] & 7) == 4) continue;
+        if (p[0] != 0x48 || p[1] != 0x8D || (p[2] & 0xF8) != 0x48 || (p[2] & 7) == 4 || (p[2] & 7) == 5 || p[3] >= 0x80) continue;
         uint8_t *site, *t = next_fn_call(p + 4, 16, &site);
         if (!t) continue;
         if (view < 0) view = p[3];
@@ -130,8 +141,8 @@ static int find_bandage_op(void)
     }
     g_opViewOff = (uint32_t)view;
     g_viewIsEmpty = (ViewTestFn)fns[0]; g_viewGetDef = (ViewDefFn)fns[1]; g_viewCurrent = (ViewCellFn)fns[2];
-    logf_("bandage: UseItem step exe+0x%llX: state +0x%X, owner +0x%X, item view +0x%X (IsEmpty exe+0x%llX, GetDef exe+0x%llX, Current exe+0x%llX), "
-          "def tags +0x%X, HasTag exe+0x%llX, IsNet exe+0x%llX", EXE_OFF(f), g_opStateOff, g_opUserOff, g_opViewOff, EXE_OFF(fns[0]), EXE_OFF(fns[1]),
+    logf_("bandage: UseItem step = slot %d exe+0x%llX: state +0x%X, owner +0x%X, item view +0x%X (IsEmpty exe+0x%llX, GetDef exe+0x%llX, Current exe+0x%llX), "
+          "def tags +0x%X, HasTag exe+0x%llX, IsNet exe+0x%llX", g_useItemSlot, EXE_OFF(f), g_opStateOff, g_opUserOff, g_opViewOff, EXE_OFF(fns[0]), EXE_OFF(fns[1]),
           EXE_OFF(fns[2]), g_defTagsOff, EXE_OFF(g_hasTag), EXE_OFF(g_isNet));
     return 1;
 }
@@ -275,10 +286,27 @@ static int find_bandage_net(void)
         g_removeCmdTagsOff = 0x18;
         g_tagsCopy = (TagsCopyFn)call_after_lea_rcx_rsp(lea - 0x10, lea + 0x40, cmdOff + g_removeCmdTagsOff, &nx);
         g_tagsDtor = nx ? (TagsDtorFn)call_after_lea_rcx_rsp(nx, nx + 0x60, cmdOff + g_removeCmdTagsOff, NULL) : NULL;
+        /* "set target entity" (slot 5 in 1.067, 7 in 1.068), read from the sender, which then sends through vt[1]:
+           game / server: lea rcx,[rip+SetTarget] ; ... mov rax,[rdx+SLOT*8] ; cmp rax,rcx   (own virtual compared with the base one)
+           editor:        call qword [rax+SLOT*8] ; mov rcx,[rax] ; mov rdx,[rcx+8] */
+        for (uint8_t *q = lea + 7; q < lea + 0x70 && g_cmdTargetSlot < 0; q++) {
+            if (q[0] == 0xFF && q[1] == 0x50 && !(q[2] & 7) && q[2] >= 0x10 && q[2] < 0x80 && !memcmp(q + 3, "\x48\x8B\x08\x48\x8B\x51\x08", 7)) {
+                if (in_text(g_vtRemoveCmd[q[2] / 8])) g_cmdTargetSlot = q[2] / 8;
+                break;
+            }
+            if (q[0] != 0x48 || q[1] != 0x8D || q[2] != 0x0D) continue;
+            uint8_t *fn = q + 7 + *(int32_t *)(q + 3);
+            for (uint8_t *r = q + 7; r < q + 0x28; r++)
+                if (r[0] == 0x48 && r[1] == 0x8B && r[2] == 0x42 && !(r[3] & 7) && r[3] >= 0x10 && r[3] < 0x80 && r[4] == 0x48 && r[5] == 0x3B && r[6] == 0xC1) {
+                    int k = r[3] / 8;
+                    if (g_vtRemoveCmd[k] == (void *)fn) g_cmdTargetSlot = k;
+                    break;
+                }
+        }
     }
-    if (!callsRm || !g_removeCmdCountOff || g_removeCmdCountOff < 0x18 + 0x300 || !g_removeCmdId || !g_isClient || !g_tagsCopy || !g_tagsDtor) {
-        logf_("bandage net: inventory remove command not recognised (execute %d, count +0x%X, id 0x%X, IsClient %d, Tags copy %d / dtor %d)",
-              callsRm, g_removeCmdCountOff, g_removeCmdId, g_isClient != NULL, g_tagsCopy != NULL, g_tagsDtor != NULL);
+    if (!callsRm || !g_removeCmdCountOff || g_removeCmdCountOff < 0x18 + 0x300 || !g_removeCmdId || !g_isClient || !g_tagsCopy || !g_tagsDtor || g_cmdTargetSlot < 0) {
+        logf_("bandage net: inventory remove command not recognised (execute %d, count +0x%X, id 0x%X, IsClient %d, Tags copy %d / dtor %d, set-target slot %d)",
+              callsRm, g_removeCmdCountOff, g_removeCmdId, g_isClient != NULL, g_tagsCopy != NULL, g_tagsDtor != NULL, g_cmdTargetSlot);
         return 0;
     }
     /* eUseMedkitCommand: execute reads mov rdi,[rbx+0x28] (target) and movss xmm1,[rbx+0x1C] (health); the sender (medic
@@ -296,9 +324,9 @@ static int find_bandage_net(void)
             if (p[0] == 0x8B && (p[1] & 0xC0) == 0x80 && (p[1] & 7) != 4) { uint32_t d = *(uint32_t *)(p + 2); if (d >= 0x40 && d < 0x400) { g_entNetIdOff = d; g_medkitCmdId = id; } }
     }
     if (!g_entNetIdOff) { logf_("bandage net: medic heal sender not recognised (entity net id)"); return 0; }
-    logf_("bandage net: IsClient exe+0x%llX; eInventoryRemoveCommand id 0x%X (tags +0x%X, count +0x%X, Tags copy exe+0x%llX / dtor exe+0x%llX); "
+    logf_("bandage net: IsClient exe+0x%llX; eInventoryRemoveCommand id 0x%X (tags +0x%X, count +0x%X, set target = slot %d, Tags copy exe+0x%llX / dtor exe+0x%llX); "
           "eUseMedkitCommand id 0x%X (execute exe+0x%llX), entity net id +0x%X", EXE_OFF(g_isClient), g_removeCmdId, g_removeCmdTagsOff,
-          g_removeCmdCountOff, EXE_OFF(g_tagsCopy), EXE_OFF(g_tagsDtor), g_medkitCmdId, EXE_OFF(ex), g_entNetIdOff);
+          g_removeCmdCountOff, g_cmdTargetSlot, EXE_OFF(g_tagsCopy), EXE_OFF(g_tagsDtor), g_medkitCmdId, EXE_OFF(ex), g_entNetIdOff);
     return 1;
 }
 
@@ -322,7 +350,7 @@ static void send_bandage_result(uint8_t *user, void *def, int removed, float hea
     *(void ***)rc = g_vtRemoveCmd; *(uint32_t *)(rc + 8) = g_removeCmdId;
     g_tagsCopy(rc + g_removeCmdTagsOff, (const uint8_t *)def + g_defTagsOff);
     *(int32_t *)(rc + g_removeCmdCountOff) = removed;
-    void *c = ((CmdTargetFn)g_vtRemoveCmd[5])(rc, user);
+    void *c = ((CmdTargetFn)g_vtRemoveCmd[g_cmdTargetSlot])(rc, user);
     ((CmdFn)(*(void ***)c)[1])(c);
     g_tagsDtor(rc + g_removeCmdTagsOff);
 
@@ -423,7 +451,7 @@ static uint64_t fx_box_click(void *view, void *ev)
 
 static int install_bandage(void)
 {
-    if (!vt_hook(g_vtUseItem, 9, (void *)fx_useitem_tick, (void **)&g_useItemOrig)) { logf_("bandage: UseItem vtable not writable"); return 0; }
+    if (g_useItemSlot < 0 || !vt_hook(g_vtUseItem, g_useItemSlot, (void *)fx_useitem_tick, (void **)&g_useItemOrig)) { logf_("bandage: UseItem vtable not writable"); return 0; }
     if (g_vtBoxView && !vt_hook(g_vtBoxView, 39, (void *)fx_box_click, (void **)&g_boxClickOrig)) g_vtBoxView = NULL;
     if (g_okBandageNet && !vt_hook(g_vtMedkitCmd, 4, (void *)fx_medkit_exec, (void **)&g_medkitExecOrig)) {
         g_okBandageNet = 0; logf_("bandage net: eUseMedkitCommand vtable not writable - multiplayer OFF");
@@ -535,14 +563,15 @@ static int find_bandage_auto(void)
     if (j < 3 || j + 2 >= n || t[j + 1] != (uint8_t *)g_removeMany) { logf_("auto bandage: inventory walk not recognised (eInventoryRemoveCommand execute)"); return 0; }
     g_invGetBox = (GetBoxFn)t[j - 3]; g_viewCtor = (ViewCtorFn)t[j - 2]; g_viewFind = (ViewFindFn)t[j - 1]; g_viewDtor = (ViewDtorFn)t[j + 2];
     /* the vitality timer and its owner: the function of the SetStaminaMovementModeLimit call site; mov rdi,rcx ; call IsClient ;
-       test al,al ; jne ; ... first mov r64,[rdi+disp8] */
+       test al,al ; jne ; ... first mov r64,[rdi+disp8] (1.068: rsi) */
     if (!g_vitSetLimitSite && !find_vitality_chassis()) return 0;
     uint32_t f = func_of(g_vitSetLimitSite);
     g_vitTimer = f ? g_base + f : NULL;
-    uint8_t *mv = NULL;
-    for (uint8_t *p = g_vitTimer; p && p < g_vitTimer + 0x40 && !mv; p++) if (p[0] == 0x48 && p[1] == 0x8B && p[2] == 0xF9) mv = p;
+    uint8_t *mv = NULL; int self = 7;                                /* this is kept in rdi (1.067) or rsi (1.068) */
+    for (uint8_t *p = g_vitTimer; p && p < g_vitTimer + 0x40 && !mv; p++)
+        if (p[0] == 0x48 && p[1] == 0x8B && (p[2] == 0xF9 || p[2] == 0xF1) && p[3] == 0xE8) { mv = p; self = p[2] == 0xF9 ? 7 : 6; }   /* mov rdi|rsi,rcx ; call IsClient */
     for (uint8_t *p = mv ? mv + 3 : NULL; p && p < mv + 0x60 && !g_vitOwnerOff; p++)
-        if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8B && (p[2] & 0xC7) == 0x47 && p[3] >= 0x08 && p[3] < 0x80) g_vitOwnerOff = p[3];
+        if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8B && (p[2] & 0xC7) == (0x40 | self) && p[3] >= 0x08 && p[3] < 0x80) g_vitOwnerOff = p[3];
     int n2 = calls_to(g_vitTimer, g_vitTimerSites, 3);
     g_vitTimerSiteN = n2 > 3 ? 0 : n2;
     if (!mv || !g_vitOwnerOff || !g_vitTimerSiteN) { logf_("auto bandage: vitality timer not recognised (owner +0x%X, %d calls)", g_vitOwnerOff, g_vitTimerSiteN); return 0; }
