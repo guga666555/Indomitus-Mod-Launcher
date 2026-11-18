@@ -710,7 +710,8 @@ static std::string MarkerKey(const std::string& s)
 }
 
 // markerKey: MarkerKey() of the marker.
-static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& markerKey)
+// A mod.info as UTF-8 text (the file is UTF-8 or UTF-16 LE).
+static std::string ReadModInfo(const std::wstring& modInfo)
 {
     std::string t = ReadFileA(modInfo);
     if (t.size() >= 2 && (unsigned char)t[0] == 0xFF && (unsigned char)t[1] == 0xFE) {   // UTF-16 LE file
@@ -718,6 +719,12 @@ static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& mar
         for (size_t i = 2; i + 1 < t.size(); i += 2) w += (wchar_t)((unsigned char)t[i] | ((unsigned char)t[i + 1] << 8));
         t = Utf8(w);
     }
+    return t;
+}
+
+static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& markerKey)
+{
+    std::string t = ReadModInfo(modInfo);
     for (size_t p = 0; (p = t.find("{desc", p)) != std::string::npos; p += 5) {
         size_t q1 = p + 5;
         while (q1 < t.size() && (t[q1] == ' ' || t[q1] == '\t' || t[q1] == '\r' || t[q1] == '\n')) ++q1;
@@ -729,7 +736,62 @@ static bool ModInfoHasMarker(const std::wstring& modInfo, const std::string& mar
     return false;
 }
 
-static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerKey, std::vector<std::wstring>& out)
+// The mod's own title: {name "..."} of its mod.info. Empty when there is none.
+static std::wstring ModInfoName(const std::wstring& modInfo)
+{
+    std::string t = ReadModInfo(modInfo);
+    size_t p = t.find("{name");
+    if (p == std::string::npos) return L"";
+    size_t q1 = t.find('"', p), q2 = q1 == std::string::npos ? q1 : t.find('"', q1 + 1);
+    if (q2 == std::string::npos || q2 - q1 > 200) return L"";
+    return Widen(t.substr(q1 + 1, q2 - q1 - 1));
+}
+
+// entry ("indomitus_001", "mod_123") -> the title from its mod.info, for the mod selection window (UI thread reads it
+// after a scan it made itself; the launch thread only writes the same values again)
+static std::vector<std::pair<std::wstring, std::wstring>> g_modTitles;
+static std::wstring ModTitle(const std::wstring& entry)
+{
+    for (const auto& kv : g_modTitles) if (kv.first == entry) return kv.second;
+    return L"";
+}
+
+// Marked mods the player switched off in the mod selection window (entries, lower case), kept in
+// %LocalAppData%\Indomitus Launcher\mods_off.txt, one per line. They only count on a start where the mods folder
+// question was shown, because that window is the only place to switch them back on.
+static std::vector<std::wstring> g_modsOff;
+static std::wstring ModsOffFile()
+{
+    std::wstring root = LauncherDataDir();
+    return root.empty() ? root : root + L"\\mods_off.txt";
+}
+static void LoadModsOff()
+{
+    g_modsOff.clear();
+    std::wstring f = ModsOffFile();
+    if (f.empty() || !PathFileExistsW(f.c_str())) return;
+    std::string t = ReadFileA(f), line;
+    for (size_t i = 0; i <= t.size(); i++) {
+        if (i < t.size() && t[i] != '\n' && t[i] != '\r') { line += t[i]; continue; }
+        if (!line.empty() && line.size() < 128) g_modsOff.push_back(Widen(line));
+        line.clear();
+    }
+}
+static void SaveModsOff()
+{
+    std::wstring f = ModsOffFile();
+    if (f.empty()) return;
+    std::string t;
+    for (const auto& e : g_modsOff) t += Utf8(e) + "\r\n";
+    if (t.empty()) DeleteFileW(f.c_str());
+    else if (!WriteFileAtomic(f, t)) Log(L"mods: could not write %ls", f.c_str());
+}
+static bool ModIsOff(const std::wstring& entry)
+{
+    return std::find(g_modsOff.begin(), g_modsOff.end(), entry) != g_modsOff.end();
+}
+
+static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerKey, std::vector<std::wstring>& out, bool log)
 {
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
@@ -745,7 +807,11 @@ static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const
         std::wstring entry = prefix + name;
         for (auto& c : entry) c = towlower(c);
         out.push_back(entry);
-        Log(L"marked mod: %ls  (%ls)", entry.c_str(), info.c_str());
+        std::wstring title = ModInfoName(info);
+        bool known = false;
+        for (auto& kv : g_modTitles) if (kv.first == entry) { kv.second = title; known = true; }
+        if (!known) g_modTitles.emplace_back(entry, title);
+        if (log) Log(L"marked mod: %ls  (%ls)", entry.c_str(), info.c_str());
     } while (FindNextFileW(h, &fd));
     FindClose(h);
 }
@@ -753,14 +819,15 @@ static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const
 // Local mods and Steam Workshop mods carrying the marker, sorted alphabetically (= the order they are enabled in).
 // local / workshop (optional): the same entries split by where they were found.
 static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, const std::wstring& appid, const std::wstring& marker,
-                                                std::vector<std::wstring>* local = nullptr, std::vector<std::wstring>* workshop = nullptr)
+                                                std::vector<std::wstring>* local = nullptr, std::vector<std::wstring>* workshop = nullptr,
+                                                bool log = true)
 {
     std::vector<std::wstring> out, loc, shop;
     std::string m = MarkerKey(Utf8(marker));
     if (m == " ") return out;                                                // empty (or only brackets) = no marker
     std::wstring root = DirOf(DirOf(DirOf(gameExe)));                       // binaries\x64\exe -> game root
-    ScanMarkedMods(root + L"\\mods", L"", m, loc);
-    ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, shop);   // <library>\steamapps\...
+    ScanMarkedMods(root + L"\\mods", L"", m, loc, log);
+    ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, shop, log);   // <library>\steamapps\...
     std::sort(loc.begin(), loc.end());                                       // the entries are lower case already
     std::sort(shop.begin(), shop.end());
     // a local folder that happens to carry a workshop entry's name is the same entry for the game: it counts as local
@@ -872,8 +939,13 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err, bool* cancel
         const auto& use = pick == 1 ? local : workshop;
         const auto& drop = pick == 1 ? workshop : local;
         wanted.clear();
-        for (const auto& m : use) wanted.push_back(Utf8(m));
+        int off = 0;
+        if (g_modFolderPick)                                      // asked in the launcher's own window: its mod selection counts
+            for (const auto& m : use) if (ModIsOff(m)) ++off;
+        if (off == (int)use.size()) off = 0;                      // never start with every mod of the folder switched off
+        for (const auto& m : use) (off && ModIsOff(m) ? unwanted : wanted).push_back(Utf8(m));
         for (const auto& m : drop) unwanted.push_back(Utf8(m));
+        if (off) Log(L"mods: %d mod(s) of that folder are switched off in the mod selection", off);
         Log(L"mods: marked mods exist locally and in the workshop folder; the player chose the %ls folder (%d mod(s) used, %d left out)",
             pick == 1 ? L"game mods" : L"workshop", (int)use.size(), (int)drop.size());
     }
@@ -3292,17 +3364,306 @@ static void RequestClose()
     SetStatus(L"st_cancelling");
 }
 
-// ---- "which mods folder?" dialog, drawn like the launcher window (asked at PLAY / EDITOR when marked mods are found
-//      both in <game>\mods and in the Steam Workshop folder). Modal: the launcher window is disabled while it is open.
+// ---- the launcher's own dialogs, drawn like its window: "which mods folder?" (asked at PLAY / EDITOR when marked mods
+//      are found both in <game>\mods and in the Steam Workshop folder) and the mod selection it opens.
+//      Both are modal: their owner is disabled while they are open.
+
+// Shows dlg over its disabled owner and runs messages until result leaves -1. Destroys dlg.
+static void RunModal(HWND dlg, HWND owner, int& result)
+{
+    EnableWindow(owner, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(dlg);
+    MSG m;
+    while (result == -1) {
+        BOOL got = GetMessageW(&m, nullptr, 0, 0);
+        if (got <= 0) { if (got == 0) PostQuitMessage((int)m.wParam); result = 0; break; }   // WM_QUIT: hand it back to the main loop
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(owner, TRUE);
+    DestroyWindow(dlg);
+    SetForegroundWindow(owner);
+}
+
+static HWND CreateDialogWindow(const wchar_t* cls, WNDPROC proc, HWND owner, int w, int h)
+{
+    HMODULE hi = GetModuleHandleW(nullptr);
+    WNDCLASSEXW wc{ sizeof(wc) };
+    if (!GetClassInfoExW(hi, cls, &wc)) {
+        wc = WNDCLASSEXW{ sizeof(wc) };
+        wc.lpfnWndProc   = proc;
+        wc.hInstance     = hi;
+        wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = cls;
+        if (!RegisterClassExW(&wc)) return nullptr;
+    }
+    RECT o{}; GetWindowRect(owner, &o);
+    return CreateWindowExW(0, cls, L"Indomitus", WS_POPUP, o.left + ((o.right - o.left) - w) / 2, o.top + ((o.bottom - o.top) - h) / 2,
+                           w, h, owner, nullptr, hi, nullptr);
+}
+
+// dark panel with the double green frame; returns the memory DC to draw on (finish with DialogBlit)
+static HDC DialogBegin(HDC dc, const RECT& c, HBITMAP& bmp, HGDIOBJ& old)
+{
+    HDC mem = CreateCompatibleDC(dc);
+    bmp = CreateCompatibleBitmap(dc, c.right, c.bottom);
+    old = SelectObject(mem, bmp);
+    SetBkMode(mem, TRANSPARENT);
+    FillRectC(mem, 0, 0, c.right, c.bottom, RGB(4, 30, 12));
+    RECT edge{ 0, 0, c.right - 1, c.bottom - 1 };
+    StrokeRound(mem, edge, 0, C_BTN_EDGE, 1);
+    RECT in{ S(5), S(5), c.right - S(6), c.bottom - S(6) };
+    StrokeRound(mem, in, 0, RGB(30, 110, 60), 1);
+    return mem;
+}
+static void DialogBlit(HDC dc, const RECT& c, HDC mem, HBITMAP bmp, HGDIOBJ old)
+{
+    BitBlt(dc, 0, 0, c.right, c.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+}
+static void DialogButton(HDC mem, const RECT& r, bool hov, bool dn, bool enabled, BYTE alpha)
+{
+    int radius = S(10);
+    if (dn)       FillRoundAlpha(mem, r, radius, C_BTN_DOWN, 235);
+    else if (hov) FillRoundAlpha(mem, r, radius, C_BTN_HOV, 215);
+    else          FillRoundAlpha(mem, r, radius, C_BTN_FILL, enabled ? alpha : 90);
+    if (hov) { RECT g = r; InflateRect(&g, S(3), S(3)); StrokeRound(mem, g, radius + S(3), RGB(40, 170, 90), S(2)); }
+    StrokeRound(mem, r, radius, hov ? C_BTN_GLOW : (enabled ? C_BTN_EDGE : RGB(50, 120, 75)), hov ? S(2) : 1);
+}
+static void DialogButtonLabel(HDC mem, const RECT& r, const std::wstring& label, bool dn, bool enabled)
+{
+    HGDIOBJ f0 = SelectObject(mem, g_fButton);
+    TEXTMETRICW tm{}; GetTextMetricsW(mem, &tm);
+    SelectObject(mem, f0);
+    int d = dn ? S(1) : 0, tw = TextWidth(mem, g_fButton, label, S(1));
+    TextAt(mem, g_fButton, enabled ? C_TEXT : RGB(120, 175, 140), (r.left + r.right - tw) / 2 + d, (r.top + r.bottom - tm.tmHeight) / 2 + d, label, S(1));
+}
+static int DialogTextHeight(HDC dc, HFONT f, const std::wstring& t, int width)
+{
+    HGDIOBJ of = SelectObject(dc, f);
+    RECT r{ 0, 0, width, 0 };
+    DrawTextW(dc, t.c_str(), -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, of);
+    return r.bottom - r.top;
+}
+
+// ---- mod selection: one row per marked mod of a folder, ticked = enabled at the start
+struct PickMods {
+    std::wstring title, text, ok, cancel;
+    std::vector<std::wstring> ids, names;
+    std::vector<char> on;
+    std::vector<RECT> row;
+    RECT btnOk{}, btnCancel{};
+    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;       // hover / pressed: row index, n = OK, n + 1 = Cancel
+    bool AnyOn() const { for (char c : on) if (c) return true; return false; }
+};
+static PickMods* g_pick = nullptr;
+
+static int PickHit(POINT p)
+{
+    PickMods& a = *g_pick;
+    int n = (int)a.row.size();
+    for (int i = 0; i < n; i++) if (PtInRect(&a.row[i], p)) return i;
+    if (PtInRect(&a.btnOk, p)) return a.AnyOn() ? n : -1;
+    if (PtInRect(&a.btnCancel, p)) return n + 1;
+    return -1;
+}
+
+static void PickLayout(HDC dc)
+{
+    PickMods& a = *g_pick;
+    a.w = S(500);
+    int pad = S(26), y = pad;
+    y += DialogTextHeight(dc, g_fButton, a.title, a.w - 2 * pad) + S(12);
+    y += DialogTextHeight(dc, g_fSub, a.text, a.w - 2 * pad) + S(18);
+    a.row.clear();
+    for (size_t i = 0; i < a.ids.size(); i++) { a.row.push_back(RECT{ pad, y, a.w - pad, y + S(46) }); y += S(46) + S(8); }
+    y += S(12);
+    int bw = (a.w - 2 * pad - S(16)) / 2;
+    a.btnOk     = RECT{ pad, y, pad + bw, y + S(38) };
+    a.btnCancel = RECT{ a.w - pad - bw, y, a.w - pad, y + S(38) };
+    a.h = y + S(38) + pad;
+}
+
+static void PickPaint(HWND hwnd, HDC dc)
+{
+    PickMods& a = *g_pick;
+    RECT c; GetClientRect(hwnd, &c);
+    HBITMAP bmp; HGDIOBJ ob;
+    HDC mem = DialogBegin(dc, c, bmp, ob);
+    bool rtl = g_langMeta[g_lang].rtl;
+    UINT align = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_WORDBREAK | DT_NOPREFIX;
+    int pad = S(26), y = pad, n = (int)a.row.size();
+    HGDIOBJ of = SelectObject(mem, g_fButton);
+    SetTextColor(mem, C_TITLE);
+    RECT tr{ pad, y, c.right - pad, c.bottom };
+    y += DrawTextW(mem, a.title.c_str(), -1, &tr, align) + S(12);
+    SelectObject(mem, g_fSub);
+    SetTextColor(mem, C_TEXT_DIM);
+    RECT br{ pad, y, c.right - pad, c.bottom };
+    DrawTextW(mem, a.text.c_str(), -1, &br, align);
+    SelectObject(mem, of);
+
+    for (int i = 0; i < n; i++) {
+        const RECT& r = a.row[i];
+        bool hov = a.hover == i, on = a.on[i] != 0;
+        FillRoundAlpha(mem, r, S(8), hov ? C_BTN_HOV : C_BTN_FILL, hov ? 150 : (on ? 170 : 70));
+        StrokeRound(mem, r, S(8), hov ? C_BTN_GLOW : (on ? C_BTN_EDGE : RGB(50, 120, 75)), 1);
+        int bs = S(20), cy = (r.top + r.bottom) / 2;
+        RECT box{ rtl ? r.right - S(14) - bs : r.left + S(14), cy - bs / 2, 0, cy - bs / 2 + bs };
+        box.right = box.left + bs;
+        FillRectC(mem, box.left, box.top, box.right, box.bottom, RGB(3, 22, 9));
+        StrokeRound(mem, box, 0, on ? C_BTN_GLOW : RGB(70, 150, 100), 1);
+        if (on) {                                                  // the tick
+            HPEN pen = CreatePen(PS_SOLID, S(2), C_BTN_GLOW);
+            HGDIOBJ op = SelectObject(mem, pen);
+            MoveToEx(mem, box.left + S(4), cy, nullptr);
+            LineTo(mem, box.left + S(8), cy + S(5));
+            LineTo(mem, box.right - S(3), cy - S(6));
+            SelectObject(mem, op);
+            DeleteObject(pen);
+        }
+        RECT nr{ r.left + S(14) + bs + S(12), r.top + S(5), r.right - S(12), r.top + S(26) };
+        RECT ir{ nr.left, r.top + S(26), nr.right, r.bottom - S(3) };
+        if (rtl) { nr.left = ir.left = r.left + S(12); nr.right = ir.right = r.right - S(14) - bs - S(12); }
+        UINT one = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
+        bool named = !a.names[i].empty();
+        HGDIOBJ f1 = SelectObject(mem, g_fSub);
+        SetTextColor(mem, on ? C_TEXT : RGB(120, 175, 140));
+        if (!named) { nr.top = r.top; nr.bottom = r.bottom; one |= DT_VCENTER; }
+        DrawTextW(mem, (named ? a.names[i] : a.ids[i]).c_str(), -1, &nr, one);
+        if (named) {
+            SelectObject(mem, g_fSmall);
+            SetTextColor(mem, on ? C_TEXT_DIM : RGB(90, 140, 110));
+            DrawTextW(mem, a.ids[i].c_str(), -1, &ir, one);
+        }
+        SelectObject(mem, f1);
+    }
+    bool any = a.AnyOn();
+    DialogButton(mem, a.btnOk, any && a.hover == n, any && a.hover == n && a.pressed == n, any, 215);
+    DialogButtonLabel(mem, a.btnOk, a.ok, any && a.hover == n && a.pressed == n, any);
+    DialogButton(mem, a.btnCancel, a.hover == n + 1, a.hover == n + 1 && a.pressed == n + 1, true, 150);
+    DialogButtonLabel(mem, a.btnCancel, a.cancel, a.hover == n + 1 && a.pressed == n + 1, true);
+    DialogBlit(dc, c, mem, bmp, ob);
+}
+
+static LRESULT CALLBACK PickProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (!g_pick) return DefWindowProcW(hwnd, msg, wp, lp);
+    PickMods& a = *g_pick;
+    int n = (int)a.row.size();
+    POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+    switch (msg) {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); PickPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
+    case WM_NCHITTEST: {                                           // drag the box by anything that is not a row or a button
+        ScreenToClient(hwnd, &p);
+        return PtInRect(&a.btnOk, p) || PickHit(p) != -1 ? HTCLIENT : HTCAPTION;
+    }
+    case WM_NCMOUSEMOVE:
+    case WM_MOUSELEAVE:
+        if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        break;
+    case WM_MOUSEMOVE: {
+        int h = PickHit(p);
+        if (h != a.hover) {
+            a.hover = h;
+            if (h != -1) PlaySoundSpec(g_cfg.soundHover, RES_SOUND_HOVER);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&t);
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+        a.pressed = PickHit(p);
+        if (a.pressed != -1) { SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    case WM_LBUTTONUP: {
+        int was = a.pressed;
+        a.pressed = -1;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        if (was != -1 && PickHit(p) == was) {
+            PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
+            if (was < n) a.on[was] = !a.on[was];
+            else a.result = was == n ? 1 : 0;
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE) a.result = 0;
+        else if (wp == VK_RETURN && a.AnyOn()) a.result = 1;
+        return 0;
+    case WM_CLOSE:
+        a.result = 0;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Lets the player tick the mods of one folder. true = the selection changed (it is saved already).
+static bool PickModsOf(HWND owner, const std::wstring& folderLabel, const std::vector<std::wstring>& mods)
+{
+    if (g_pick) return false;
+    PickMods a;
+    a.title  = T(L"mods_pick_title") + L" - " + folderLabel;
+    a.text   = ReplaceAll(T(L"mods_pick_text"), L"\\n", L"\n");
+    a.ok     = T(L"mods_pick_ok");
+    a.cancel = T(L"mods_ask_cancel");
+    for (const auto& e : mods) { a.ids.push_back(e); a.names.push_back(ModTitle(e)); a.on.push_back(ModIsOff(e) ? 0 : 1); }
+    if (!a.AnyOn()) for (auto& c : a.on) c = 1;                    // a stale list that switches everything off
+    std::vector<char> before = a.on;
+    g_pick = &a;
+    HDC sdc = GetDC(owner);
+    PickLayout(sdc);
+    ReleaseDC(owner, sdc);
+    HWND hwnd = CreateDialogWindow(L"IndomitusPickMods", PickProc, owner, a.w, a.h);
+    if (!hwnd) { g_pick = nullptr; Log(L"mod selection: could not create the window (%ls)", LastErrorText().c_str()); return false; }
+    RunModal(hwnd, owner, a.result);
+    g_pick = nullptr;
+    if (a.result != 1 || a.on == before) return false;
+    std::wstring off;
+    for (size_t i = 0; i < a.ids.size(); i++) {
+        g_modsOff.erase(std::remove(g_modsOff.begin(), g_modsOff.end(), a.ids[i]), g_modsOff.end());
+        if (!a.on[i]) { g_modsOff.push_back(a.ids[i]); off += (off.empty() ? L"" : L", ") + a.ids[i]; }
+    }
+    SaveModsOff();
+    Log(L"mod selection (%ls): switched off: %ls", folderLabel.c_str(), off.empty() ? L"(none)" : off.c_str());
+    return true;
+}
+
+// ---- "which mods folder?"
 struct AskFolder {
-    std::wstring title, text, label[3], sub[3];      // 0 = game mods folder, 1 = workshop folder, 2 = cancel
-    RECT btn[3]{};
-    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;   // result: -1 open, 0 cancel, 1 local, 2 workshop
+    std::wstring title, text, label[3], sub[2];      // 0 = game mods folder, 1 = workshop folder, 2 = cancel
+    const std::vector<std::wstring>* mods[2]{};
+    RECT btn[3]{}, pick[2]{};                        // pick: the "choose the mods" button inside a folder button (more than one mod)
+    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;   // hover / pressed: 0..2 = btn, 3..4 = pick; result: -1 open, 0 cancel, 1 local, 2 workshop
 };
 static AskFolder* g_ask = nullptr;
 
+static bool AskHasPick(int i) { return g_ask->mods[i] && g_ask->mods[i]->size() > 1; }
+
+// the mods of a folder that will be enabled, and "n / m" when some are switched off
+static void AskRefreshSubs()
+{
+    for (int i = 0; i < 2; i++) {
+        const auto& v = *g_ask->mods[i];
+        std::wstring t; int on = 0;
+        bool allOff = true;                                        // everything off = the list is ignored (as at the start)
+        for (const auto& e : v) if (!ModIsOff(e)) allOff = false;
+        for (const auto& e : v) if (allOff || !ModIsOff(e)) { if (!t.empty()) t += L", "; t += e; ++on; }
+        if (on != (int)v.size()) t = std::to_wstring(on) + L" / " + std::to_wstring(v.size()) + L":  " + t;
+        g_ask->sub[i] = t;
+    }
+}
+
 static int AskHit(POINT p)
 {
+    for (int i = 0; i < 2; i++) if (AskHasPick(i) && PtInRect(&g_ask->pick[i], p)) return 3 + i;
     for (int i = 0; i < 3; i++) if (PtInRect(&g_ask->btn[i], p)) return i;
     return -1;
 }
@@ -3312,19 +3673,18 @@ static void AskLayout(HDC dc)
     AskFolder& a = *g_ask;
     a.w = S(540);
     int pad = S(26), y = pad;
-    HGDIOBJ of = SelectObject(dc, g_fButton);
-    RECT tr{ pad, 0, a.w - pad, 0 };
-    DrawTextW(dc, a.title.c_str(), -1, &tr, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-    y += (tr.bottom - tr.top) + S(12);
-    SelectObject(dc, g_fSub);
-    RECT br{ pad, 0, a.w - pad, 0 };
-    DrawTextW(dc, a.text.c_str(), -1, &br, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-    y += (br.bottom - br.top) + S(20);
-    SelectObject(dc, of);
+    y += DialogTextHeight(dc, g_fButton, a.title, a.w - 2 * pad) + S(12);
+    y += DialogTextHeight(dc, g_fSub, a.text, a.w - 2 * pad) + S(20);
     for (int i = 0; i < 3; i++) {
         int bh = i == 2 ? S(38) : S(62);
         int inset = i == 2 ? S(150) : 0;
         a.btn[i] = RECT{ pad + inset, y, a.w - pad - inset, y + bh };
+        if (i < 2) {
+            int ps = S(40), py = y + (bh - ps) / 2;
+            bool rtl = g_langMeta[g_lang].rtl;
+            a.pick[i] = rtl ? RECT{ a.btn[i].left + S(12), py, a.btn[i].left + S(12) + ps, py + ps }
+                            : RECT{ a.btn[i].right - S(12) - ps, py, a.btn[i].right - S(12), py + ps };
+        }
         y += bh + (i == 1 ? S(18) : S(12));
     }
     a.h = y - S(12) + pad;
@@ -3334,16 +3694,8 @@ static void AskPaint(HWND hwnd, HDC dc)
 {
     AskFolder& a = *g_ask;
     RECT c; GetClientRect(hwnd, &c);
-    HDC mem = CreateCompatibleDC(dc);
-    HBITMAP bmp = CreateCompatibleBitmap(dc, c.right, c.bottom);
-    HGDIOBJ ob = SelectObject(mem, bmp);
-    SetBkMode(mem, TRANSPARENT);
-    FillRectC(mem, 0, 0, c.right, c.bottom, RGB(4, 30, 12));
-    RECT edge{ 0, 0, c.right - 1, c.bottom - 1 };
-    StrokeRound(mem, edge, 0, C_BTN_EDGE, 1);
-    RECT in{ S(5), S(5), c.right - S(6), c.bottom - S(6) };
-    StrokeRound(mem, in, 0, RGB(30, 110, 60), 1);
-
+    HBITMAP bmp; HGDIOBJ ob;
+    HDC mem = DialogBegin(dc, c, bmp, ob);
     bool rtl = g_langMeta[g_lang].rtl;
     UINT align = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_WORDBREAK | DT_NOPREFIX;
     int pad = S(26), y = pad;
@@ -3355,57 +3707,59 @@ static void AskPaint(HWND hwnd, HDC dc)
     SetTextColor(mem, C_TEXT_DIM);
     RECT br{ pad, y, c.right - pad, c.bottom };
     DrawTextW(mem, a.text.c_str(), -1, &br, align);
+    TEXTMETRICW tm{};
+    SelectObject(mem, g_fButton);
+    GetTextMetricsW(mem, &tm);
     SelectObject(mem, of);
 
     for (int i = 0; i < 3; i++) {
         const RECT& r = a.btn[i];
         bool hov = a.hover == i, dn = hov && a.pressed == i;
-        int radius = S(10);
-        if (dn)       FillRoundAlpha(mem, r, radius, C_BTN_DOWN, 235);
-        else if (hov) FillRoundAlpha(mem, r, radius, C_BTN_HOV, 215);
-        else          FillRoundAlpha(mem, r, radius, C_BTN_FILL, i == 2 ? 150 : 215);
-        if (hov) { RECT g = r; InflateRect(&g, S(3), S(3)); StrokeRound(mem, g, radius + S(3), RGB(40, 170, 90), S(2)); }
-        StrokeRound(mem, r, radius, hov ? C_BTN_GLOW : C_BTN_EDGE, hov ? S(2) : 1);
-        int d = dn ? S(1) : 0;
-        HGDIOBJ f0 = SelectObject(mem, g_fButton);
-        TEXTMETRICW tm{}; GetTextMetricsW(mem, &tm);
-        SelectObject(mem, f0);
-        if (a.sub[i].empty()) {                                   // one centred line (Cancel)
-            int tw = TextWidth(mem, g_fButton, a.label[i], S(1));
-            TextAt(mem, g_fButton, C_TEXT, (r.left + r.right - tw) / 2 + d, (r.top + r.bottom - tm.tmHeight) / 2 + d, a.label[i], S(1));
-        } else {                                                  // label, and under it the mods of that folder
-            int tx = r.left + S(20);
-            if (rtl) tx = r.right - S(20) - TextWidth(mem, g_fButton, a.label[i], S(1));
-            TextAt(mem, g_fButton, C_TEXT, tx + d, r.top + S(9) + d, a.label[i], S(1));
-            HGDIOBJ f1 = SelectObject(mem, g_fSmall);
-            SetTextColor(mem, hov ? C_TEXT : C_TEXT_DIM);
-            RECT sr{ r.left + S(20) + d, r.top + S(9) + tm.tmHeight + S(3) + d, r.right - S(20), r.bottom - S(4) };
-            DrawTextW(mem, a.sub[i].c_str(), -1, &sr, (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-            SelectObject(mem, f1);
+        DialogButton(mem, r, hov, dn, true, i == 2 ? 150 : 215);
+        if (i == 2) { DialogButtonLabel(mem, r, a.label[i], dn, true); continue; }
+        // label, and under it the mods of that folder; the room of the pick button stays free
+        int d = dn ? S(1) : 0, room = AskHasPick(i) ? S(12) + (a.pick[i].right - a.pick[i].left) + S(10) : S(20);
+        int left = r.left + (rtl ? room : S(20)), right = r.right - (rtl ? S(20) : room);
+        int tx = rtl ? right - TextWidth(mem, g_fButton, a.label[i], S(1)) : left;
+        TextAt(mem, g_fButton, C_TEXT, tx + d, r.top + S(9) + d, a.label[i], S(1));
+        HGDIOBJ f1 = SelectObject(mem, g_fSmall);
+        SetTextColor(mem, hov ? C_TEXT : C_TEXT_DIM);
+        RECT sr{ left + d, r.top + S(9) + tm.tmHeight + S(3) + d, right, r.bottom - S(4) };
+        DrawTextW(mem, a.sub[i].c_str(), -1, &sr, (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        SelectObject(mem, f1);
+        if (!AskHasPick(i)) continue;
+        // the pick button: a small list with tick boxes
+        const RECT& q = a.pick[i];
+        bool qh = a.hover == 3 + i, qd = qh && a.pressed == 3 + i;
+        FillRoundAlpha(mem, q, S(8), qd ? C_BTN_DOWN : (qh ? C_BTN_HOV : RGB(3, 22, 9)), 235);
+        StrokeRound(mem, q, S(8), qh ? C_BTN_GLOW : C_BTN_EDGE, qh ? S(2) : 1);
+        COLORREF ic = qh ? C_BTN_GLOW : C_BTN_EDGE;
+        for (int k = 0; k < 3; k++) {
+            int ly = q.top + S(11) + k * S(9) + (qd ? S(1) : 0), bx = q.left + S(9) + (qd ? S(1) : 0);
+            RECT sq{ bx, ly - S(3), bx + S(6), ly + S(3) };
+            if (k < 2) FillRectC(mem, sq.left, sq.top, sq.right, sq.bottom, ic); else StrokeRound(mem, sq, 0, ic, 1);
+            FillRectC(mem, bx + S(10), ly - S(1), q.right - S(9) + (qd ? S(1) : 0), ly + S(1), ic);
         }
     }
-    BitBlt(dc, 0, 0, c.right, c.bottom, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, ob);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    DialogBlit(dc, c, mem, bmp, ob);
 }
 
 static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (!g_ask) return DefWindowProcW(hwnd, msg, wp, lp);
     AskFolder& a = *g_ask;
+    POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
     switch (msg) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); AskPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
-    case WM_NCHITTEST: {                                           // drag the box by anything that is not a button
-        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+    case WM_NCHITTEST:                                             // drag the box by anything that is not a button
         ScreenToClient(hwnd, &p);
         return AskHit(p) == -1 ? HTCAPTION : HTCLIENT;
-    }
     case WM_NCMOUSEMOVE:
+    case WM_MOUSELEAVE:
         if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
         break;
     case WM_MOUSEMOVE: {
-        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
         int h = AskHit(p);
         if (h != a.hover) {
             a.hover = h;
@@ -3416,25 +3770,22 @@ static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
-    case WM_MOUSELEAVE:
-        if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
-        return 0;
-    case WM_LBUTTONDOWN: {
-        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+    case WM_LBUTTONDOWN:
         a.pressed = AskHit(p);
         if (a.pressed != -1) { SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
-    }
     case WM_LBUTTONUP: {
-        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
         int was = a.pressed;
         a.pressed = -1;
         if (GetCapture() == hwnd) ReleaseCapture();
         InvalidateRect(hwnd, nullptr, FALSE);
-        if (was != -1 && AskHit(p) == was) {
-            PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
-            a.result = was == 2 ? 0 : was + 1;
-        }
+        if (was == -1 || AskHit(p) != was) return 0;
+        PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
+        if (was >= 3) {                                            // choose the mods of that folder, then back to this question
+            a.hover = -1;
+            if (PickModsOf(hwnd, a.label[was - 3], *a.mods[was - 3])) AskRefreshSubs();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        } else a.result = was == 2 ? 0 : was + 1;
         return 0;
     }
     case WM_KEYDOWN:
@@ -3451,49 +3802,21 @@ static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 // -1 = the dialog could not be shown (the caller falls back to the message box at launch).
 static int AskModFolder(HWND owner, const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
 {
-    static bool registered = false;
-    HMODULE hi = GetModuleHandleW(nullptr);
-    if (!registered) {
-        WNDCLASSEXW wc{ sizeof(wc) };
-        wc.lpfnWndProc   = AskProc;
-        wc.hInstance     = hi;
-        wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = L"IndomitusAskFolder";
-        registered = RegisterClassExW(&wc) != 0;
-    }
-    auto list = [](const std::vector<std::wstring>& v) {
-        std::wstring t;
-        for (const auto& e : v) { if (!t.empty()) t += L", "; t += e; }
-        return t;
-    };
     AskFolder a;
     a.title = T(L"mods_ask_title");
     a.text  = ReplaceAll(T(L"mods_ask_text"), L"\\n", L"\n");
-    a.label[0] = T(L"mods_ask_local");    a.sub[0] = list(local);
-    a.label[1] = T(L"mods_ask_workshop"); a.sub[1] = list(workshop);
+    a.label[0] = T(L"mods_ask_local");    a.mods[0] = &local;
+    a.label[1] = T(L"mods_ask_workshop"); a.mods[1] = &workshop;
     a.label[2] = T(L"mods_ask_cancel");
     g_ask = &a;
+    LoadModsOff();
+    AskRefreshSubs();
     HDC sdc = GetDC(owner);
     AskLayout(sdc);
     ReleaseDC(owner, sdc);
-    RECT o{}; GetWindowRect(owner, &o);
-    int x = o.left + ((o.right - o.left) - a.w) / 2, y = o.top + ((o.bottom - o.top) - a.h) / 2;
-    HWND hwnd = registered ? CreateWindowExW(0, L"IndomitusAskFolder", T(L"mods_ask_title").c_str(), WS_POPUP,
-                                             x, y, a.w, a.h, owner, nullptr, hi, nullptr) : nullptr;
+    HWND hwnd = CreateDialogWindow(L"IndomitusAskFolder", AskProc, owner, a.w, a.h);
     if (!hwnd) { g_ask = nullptr; Log(L"mods folder dialog: could not create the window (%ls)", LastErrorText().c_str()); return -1; }
-    EnableWindow(owner, FALSE);
-    ShowWindow(hwnd, SW_SHOW);
-    SetFocus(hwnd);
-    MSG m;
-    while (a.result == -1) {
-        BOOL got = GetMessageW(&m, nullptr, 0, 0);
-        if (got <= 0) { if (got == 0) PostQuitMessage((int)m.wParam); a.result = 0; break; }   // WM_QUIT: hand it back to the main loop
-        TranslateMessage(&m);
-        DispatchMessageW(&m);
-    }
-    EnableWindow(owner, TRUE);
-    DestroyWindow(hwnd);
-    SetForegroundWindow(owner);
+    RunModal(hwnd, owner, a.result);
     g_ask = nullptr;
     return a.result;
 }
@@ -3512,7 +3835,7 @@ static void DoAction(int i)
         }
         {   // Indomitus in <game>\mods and in the workshop folder: ask which folder to load, before anything starts
             std::vector<std::wstring> loc, shop;
-            FindMarkedMods(g_cfg.exe, g_cfg.appid, g_cfg.modsMarker, &loc, &shop);
+            FindMarkedMods(g_cfg.exe, g_cfg.appid, g_cfg.modsMarker, &loc, &shop, false);   // the launch scans again and logs
             g_modFolderPick = 0;
             if (!loc.empty() && !shop.empty()) {
                 int pick = AskModFolder(g_wnd, loc, shop);

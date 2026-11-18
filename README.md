@@ -98,6 +98,16 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_usercontrol` | `_indomitus_DLL_usercontrol\src` | `user_control` tagged units go to their player |
 | `gem_weaponscript` | `_indomitus_DLL_new_weaponscript` | convergence, overcharge, guided projectiles |
 
+### Mods in two folders
+
+When marked mods are found both in `<game>\mods` and in the Steam Workshop folder, PLAY and OPEN THE MAP EDITOR
+first ask which folder to load (`AskModFolder` in `launcher\main.cpp`); the marked mods of the other folder are
+taken out of the profile's mod list for that start. A folder with more than one marked mod gets a button that opens
+the mod selection: unticked mods are left out too, and the list is remembered in
+`%LocalAppData%\Indomitus Launcher\mods_off.txt`. A launcher started without its window (command line) asks with a
+plain Yes / No / Cancel box and ignores the selection. Texts: `mods_ask_*`, `mods_pick_*`, `mods_source_*` in
+`launcher\lang\*.ini`.
+
 ## Versioning
 
 `version=` in `gem_launcher.ini` is the one and only version. It appears in the window, the title bar,
