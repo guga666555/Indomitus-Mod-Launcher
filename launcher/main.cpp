@@ -751,16 +751,27 @@ static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const
 }
 
 // Local mods and Steam Workshop mods carrying the marker, sorted alphabetically (= the order they are enabled in).
-static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, const std::wstring& appid, const std::wstring& marker)
+// local / workshop (optional): the same entries split by where they were found.
+static std::vector<std::wstring> FindMarkedMods(const std::wstring& gameExe, const std::wstring& appid, const std::wstring& marker,
+                                                std::vector<std::wstring>* local = nullptr, std::vector<std::wstring>* workshop = nullptr)
 {
-    std::vector<std::wstring> out;
+    std::vector<std::wstring> out, loc, shop;
     std::string m = MarkerKey(Utf8(marker));
     if (m == " ") return out;                                                // empty (or only brackets) = no marker
     std::wstring root = DirOf(DirOf(DirOf(gameExe)));                       // binaries\x64\exe -> game root
-    ScanMarkedMods(root + L"\\mods", L"", m, out);
-    ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, out);   // <library>\steamapps\...
-    std::sort(out.begin(), out.end());                                       // the entries are lower case already
+    ScanMarkedMods(root + L"\\mods", L"", m, loc);
+    ScanMarkedMods(DirOf(DirOf(root)) + L"\\workshop\\content\\" + appid, L"mod_", m, shop);   // <library>\steamapps\...
+    std::sort(loc.begin(), loc.end());                                       // the entries are lower case already
+    std::sort(shop.begin(), shop.end());
+    // a local folder that happens to carry a workshop entry's name is the same entry for the game: it counts as local
+    shop.erase(std::remove_if(shop.begin(), shop.end(),
+                              [&](const std::wstring& e) { return std::find(loc.begin(), loc.end(), e) != loc.end(); }), shop.end());
+    out = loc;
+    out.insert(out.end(), shop.begin(), shop.end());
+    std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
+    if (local) *local = loc;
+    if (workshop) *workshop = shop;
     return out;
 }
 
@@ -816,13 +827,56 @@ static bool IsModEntry(const std::string& e, const std::vector<std::string>& mod
     return false;
 }
 
-// Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
-static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
+// Marked mods found both in <game>\mods and in the Steam Workshop folder are two copies of Indomitus (the local one is
+// the developer's working copy). Loading both loads everything twice, so the player picks one for this start.
+// Returns 1 = local, 2 = workshop, 0 = cancelled.
+static int AskModSource(const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
 {
+    auto list = [](const std::vector<std::wstring>& v) {
+        std::wstring t;
+        for (const auto& e : v) { if (!t.empty()) t += L", "; t += e; }
+        return t;
+    };
+    std::wstring text = T(L"mods_source_prompt");
+    const std::pair<const wchar_t*, std::wstring> fill[] = { { L"{local}", list(local) }, { L"{workshop}", list(workshop) }, { L"\\n", L"\n" } };
+    for (const auto& f : fill)
+        for (size_t at = 0; (at = text.find(f.first, at)) != std::wstring::npos; at += f.second.size())
+            text.replace(at, wcslen(f.first), f.second);
+    UINT rtl = g_langMeta[g_lang].rtl ? (MB_RTLREADING | MB_RIGHT) : 0;
+    int a = MessageBoxW(GetActiveWindow(), text.c_str(), T(L"mods_source_title").c_str(),
+                        MB_YESNOCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST | rtl);
+    return a == IDYES ? 1 : a == IDNO ? 2 : 0;
+}
+
+// Set by the launcher window, which asks the same question in its own dialog before it starts the launch
+// (1 = the game's mods folder, 2 = the workshop folder). 0 = not asked yet: EnsureModsEnabled asks with a message box.
+static int g_modFolderPick = 0;
+
+// Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
+// cancelled (optional) is set when the player closed the "which copy" question: nothing was changed, do not start.
+static bool EnsureModsEnabled(const Config& cfg, std::wstring& err, bool* cancelled = nullptr)
+{
+    if (cancelled) *cancelled = false;
     // Scan again now: mod.info files may have changed since the launcher opened.
-    std::vector<std::string> wanted;
-    for (const auto& m : FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker)) wanted.push_back(Utf8(m));
+    std::vector<std::string> wanted, unwanted;
+    std::vector<std::wstring> local, workshop;
+    for (const auto& m : FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker, &local, &workshop)) wanted.push_back(Utf8(m));
     if (wanted.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
+    if (!local.empty() && !workshop.empty()) {
+        int pick = g_modFolderPick ? g_modFolderPick : AskModSource(local, workshop);
+        if (!pick) {
+            Log(L"mods: marked mods exist locally and in the workshop folder; the question was cancelled - not starting");
+            if (cancelled) *cancelled = true;
+            return true;
+        }
+        const auto& use = pick == 1 ? local : workshop;
+        const auto& drop = pick == 1 ? workshop : local;
+        wanted.clear();
+        for (const auto& m : use) wanted.push_back(Utf8(m));
+        for (const auto& m : drop) unwanted.push_back(Utf8(m));
+        Log(L"mods: marked mods exist locally and in the workshop folder; the player chose the %ls folder (%d mod(s) used, %d left out)",
+            pick == 1 ? L"game mods" : L"workshop", (int)use.size(), (int)drop.size());
+    }
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) {
         // Fresh install: the game creates its profile on the first start. Don't block that start.
@@ -842,7 +896,7 @@ static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
     // entry keeps its ":n" suffix.
     std::vector<std::string> result;
     if (!cfg.modsExclusive)
-        for (const auto& e : blk.entries) if (!IsModEntry(e, wanted)) result.push_back(e);
+        for (const auto& e : blk.entries) if (!IsModEntry(e, wanted) && !IsModEntry(e, unwanted)) result.push_back(e);
     for (const auto& w : wanted) {
         std::string keep = w + ":0";
         for (const auto& e : blk.entries) if (IsModEntry(e, { w })) { keep = e; break; }
@@ -1622,6 +1676,8 @@ static void ServerWatchStart(DWORD gamePid, const std::wstring& exeDir)
 // Starts `exe` suspended, injects, resumes, verifies. On success returns 0 and hands back the
 // process handle (caller waits on it / closes it). On failure returns a non-zero code after
 // showing the error.
+enum { RC_LAUNCH_CANCELLED = 99 };   // the player cancelled a question asked before the start: no error, nothing started
+
 static int StartAndInject(const std::wstring& exe, const std::vector<std::wstring>& dlls, const std::wstring& args,
                           const std::wstring& appid, HANDLE& outProcess)
 {
@@ -1638,7 +1694,9 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
 
     {
         std::wstring err;
-        if (!EnsureModsEnabled(g_cfg, err)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
+        bool cancelled = false;
+        if (!EnsureModsEnabled(g_cfg, err, &cancelled)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
+        if (cancelled) return RC_LAUNCH_CANCELLED;
         EnsureHotkeys(g_cfg);
     }
 
@@ -3111,6 +3169,12 @@ static DWORD WINAPI LaunchThread(LPVOID p)
     }
 
     int rc = StartAndInject(exe, g_cfg.dlls, job->editor ? L"" : g_cfg.args, g_cfg.appid, hProcess);
+    if (rc == RC_LAUNCH_CANCELLED) {
+        PostMessageW(g_wnd, WM_SET_STATUS, (WPARAM)L"st_ready", 0);
+        PostMessageW(g_wnd, WM_LAUNCH_ABORTED, 0, 0);
+        delete job;
+        return 0;
+    }
     PostMessageW(g_wnd, WM_LAUNCH_DONE, (WPARAM)rc, 0);
     if (rc == 0 && hProcess) {
         if (g_cfg.waitForExit) {
@@ -3228,6 +3292,211 @@ static void RequestClose()
     SetStatus(L"st_cancelling");
 }
 
+// ---- "which mods folder?" dialog, drawn like the launcher window (asked at PLAY / EDITOR when marked mods are found
+//      both in <game>\mods and in the Steam Workshop folder). Modal: the launcher window is disabled while it is open.
+struct AskFolder {
+    std::wstring title, text, label[3], sub[3];      // 0 = game mods folder, 1 = workshop folder, 2 = cancel
+    RECT btn[3]{};
+    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;   // result: -1 open, 0 cancel, 1 local, 2 workshop
+};
+static AskFolder* g_ask = nullptr;
+
+static int AskHit(POINT p)
+{
+    for (int i = 0; i < 3; i++) if (PtInRect(&g_ask->btn[i], p)) return i;
+    return -1;
+}
+
+static void AskLayout(HDC dc)
+{
+    AskFolder& a = *g_ask;
+    a.w = S(540);
+    int pad = S(26), y = pad;
+    HGDIOBJ of = SelectObject(dc, g_fButton);
+    RECT tr{ pad, 0, a.w - pad, 0 };
+    DrawTextW(dc, a.title.c_str(), -1, &tr, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    y += (tr.bottom - tr.top) + S(12);
+    SelectObject(dc, g_fSub);
+    RECT br{ pad, 0, a.w - pad, 0 };
+    DrawTextW(dc, a.text.c_str(), -1, &br, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    y += (br.bottom - br.top) + S(20);
+    SelectObject(dc, of);
+    for (int i = 0; i < 3; i++) {
+        int bh = i == 2 ? S(38) : S(62);
+        int inset = i == 2 ? S(150) : 0;
+        a.btn[i] = RECT{ pad + inset, y, a.w - pad - inset, y + bh };
+        y += bh + (i == 1 ? S(18) : S(12));
+    }
+    a.h = y - S(12) + pad;
+}
+
+static void AskPaint(HWND hwnd, HDC dc)
+{
+    AskFolder& a = *g_ask;
+    RECT c; GetClientRect(hwnd, &c);
+    HDC mem = CreateCompatibleDC(dc);
+    HBITMAP bmp = CreateCompatibleBitmap(dc, c.right, c.bottom);
+    HGDIOBJ ob = SelectObject(mem, bmp);
+    SetBkMode(mem, TRANSPARENT);
+    FillRectC(mem, 0, 0, c.right, c.bottom, RGB(4, 30, 12));
+    RECT edge{ 0, 0, c.right - 1, c.bottom - 1 };
+    StrokeRound(mem, edge, 0, C_BTN_EDGE, 1);
+    RECT in{ S(5), S(5), c.right - S(6), c.bottom - S(6) };
+    StrokeRound(mem, in, 0, RGB(30, 110, 60), 1);
+
+    bool rtl = g_langMeta[g_lang].rtl;
+    UINT align = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_WORDBREAK | DT_NOPREFIX;
+    int pad = S(26), y = pad;
+    HGDIOBJ of = SelectObject(mem, g_fButton);
+    SetTextColor(mem, C_TITLE);
+    RECT tr{ pad, y, c.right - pad, c.bottom };
+    y += DrawTextW(mem, a.title.c_str(), -1, &tr, align) + S(12);
+    SelectObject(mem, g_fSub);
+    SetTextColor(mem, C_TEXT_DIM);
+    RECT br{ pad, y, c.right - pad, c.bottom };
+    DrawTextW(mem, a.text.c_str(), -1, &br, align);
+    SelectObject(mem, of);
+
+    for (int i = 0; i < 3; i++) {
+        const RECT& r = a.btn[i];
+        bool hov = a.hover == i, dn = hov && a.pressed == i;
+        int radius = S(10);
+        if (dn)       FillRoundAlpha(mem, r, radius, C_BTN_DOWN, 235);
+        else if (hov) FillRoundAlpha(mem, r, radius, C_BTN_HOV, 215);
+        else          FillRoundAlpha(mem, r, radius, C_BTN_FILL, i == 2 ? 150 : 215);
+        if (hov) { RECT g = r; InflateRect(&g, S(3), S(3)); StrokeRound(mem, g, radius + S(3), RGB(40, 170, 90), S(2)); }
+        StrokeRound(mem, r, radius, hov ? C_BTN_GLOW : C_BTN_EDGE, hov ? S(2) : 1);
+        int d = dn ? S(1) : 0;
+        HGDIOBJ f0 = SelectObject(mem, g_fButton);
+        TEXTMETRICW tm{}; GetTextMetricsW(mem, &tm);
+        SelectObject(mem, f0);
+        if (a.sub[i].empty()) {                                   // one centred line (Cancel)
+            int tw = TextWidth(mem, g_fButton, a.label[i], S(1));
+            TextAt(mem, g_fButton, C_TEXT, (r.left + r.right - tw) / 2 + d, (r.top + r.bottom - tm.tmHeight) / 2 + d, a.label[i], S(1));
+        } else {                                                  // label, and under it the mods of that folder
+            int tx = r.left + S(20);
+            if (rtl) tx = r.right - S(20) - TextWidth(mem, g_fButton, a.label[i], S(1));
+            TextAt(mem, g_fButton, C_TEXT, tx + d, r.top + S(9) + d, a.label[i], S(1));
+            HGDIOBJ f1 = SelectObject(mem, g_fSmall);
+            SetTextColor(mem, hov ? C_TEXT : C_TEXT_DIM);
+            RECT sr{ r.left + S(20) + d, r.top + S(9) + tm.tmHeight + S(3) + d, r.right - S(20), r.bottom - S(4) };
+            DrawTextW(mem, a.sub[i].c_str(), -1, &sr, (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            SelectObject(mem, f1);
+        }
+    }
+    BitBlt(dc, 0, 0, c.right, c.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, ob);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+}
+
+static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    AskFolder& a = *g_ask;
+    switch (msg) {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); AskPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
+    case WM_NCHITTEST: {                                           // drag the box by anything that is not a button
+        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+        ScreenToClient(hwnd, &p);
+        return AskHit(p) == -1 ? HTCAPTION : HTCLIENT;
+    }
+    case WM_NCMOUSEMOVE:
+        if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        break;
+    case WM_MOUSEMOVE: {
+        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+        int h = AskHit(p);
+        if (h != a.hover) {
+            a.hover = h;
+            if (h != -1) PlaySoundSpec(g_cfg.soundHover, RES_SOUND_HOVER);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&t);
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    case WM_LBUTTONDOWN: {
+        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+        a.pressed = AskHit(p);
+        if (a.pressed != -1) { SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
+        int was = a.pressed;
+        a.pressed = -1;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        if (was != -1 && AskHit(p) == was) {
+            PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
+            a.result = was == 2 ? 0 : was + 1;
+        }
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE) a.result = 0;
+        return 0;
+    case WM_CLOSE:
+        a.result = 0;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// 1 = the game's mods folder, 2 = the Steam Workshop folder, 0 = cancelled.
+static int AskModFolder(HWND owner, const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
+{
+    static bool registered = false;
+    HMODULE hi = GetModuleHandleW(nullptr);
+    if (!registered) {
+        WNDCLASSEXW wc{ sizeof(wc) };
+        wc.lpfnWndProc   = AskProc;
+        wc.hInstance     = hi;
+        wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"IndomitusAskFolder";
+        registered = RegisterClassExW(&wc) != 0;
+    }
+    auto list = [](const std::vector<std::wstring>& v) {
+        std::wstring t;
+        for (const auto& e : v) { if (!t.empty()) t += L", "; t += e; }
+        return t;
+    };
+    AskFolder a;
+    a.title = T(L"mods_ask_title");
+    a.text  = ReplaceAll(T(L"mods_ask_text"), L"\\n", L"\n");
+    a.label[0] = T(L"mods_ask_local");    a.sub[0] = list(local);
+    a.label[1] = T(L"mods_ask_workshop"); a.sub[1] = list(workshop);
+    a.label[2] = T(L"mods_ask_cancel");
+    g_ask = &a;
+    HDC sdc = GetDC(owner);
+    AskLayout(sdc);
+    ReleaseDC(owner, sdc);
+    RECT o{}; GetWindowRect(owner, &o);
+    int x = o.left + ((o.right - o.left) - a.w) / 2, y = o.top + ((o.bottom - o.top) - a.h) / 2;
+    HWND hwnd = registered ? CreateWindowExW(0, L"IndomitusAskFolder", T(L"mods_ask_title").c_str(), WS_POPUP,
+                                             x, y, a.w, a.h, owner, nullptr, hi, nullptr) : nullptr;
+    if (!hwnd) { g_ask = nullptr; Log(L"mods folder dialog: could not create the window (%ls)", LastErrorText().c_str()); return -1; }
+    EnableWindow(owner, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    SetFocus(hwnd);
+    MSG m;
+    while (a.result == -1) {
+        BOOL got = GetMessageW(&m, nullptr, 0, 0);
+        if (got <= 0) { if (got == 0) PostQuitMessage((int)m.wParam); a.result = 0; break; }   // WM_QUIT: hand it back to the main loop
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(owner, TRUE);
+    DestroyWindow(hwnd);
+    SetForegroundWindow(owner);
+    g_ask = nullptr;
+    return a.result;
+}
+
 static void DoAction(int i)
 {
     switch (i) {
@@ -3239,6 +3508,17 @@ static void DoAction(int i)
             SetStatus(i == ACT_EDITOR ? L"st_editor_running" : L"st_game_running", true);
             Log(L"not starting %ls: already running", PathFindFileNameW(exe.c_str()));
             return;
+        }
+        {   // Indomitus in <game>\mods and in the workshop folder: ask which folder to load, before anything starts
+            std::vector<std::wstring> loc, shop;
+            FindMarkedMods(g_cfg.exe, g_cfg.appid, g_cfg.modsMarker, &loc, &shop);
+            g_modFolderPick = 0;
+            if (!loc.empty() && !shop.empty()) {
+                int pick = AskModFolder(g_wnd, loc, shop);
+                if (pick == 0) { Log(L"mods folder question cancelled - nothing started"); SetStatus(L"st_ready"); return; }
+                if (pick > 0) g_modFolderPick = pick;             // -1 = no dialog: the message box asks at launch
+                if (g_busy) return;                               // something else started while the box was open
+            }
         }
         g_busy = true;
         SetStatus(i == ACT_EDITOR ? L"st_starting_editor" : L"st_starting_game");
