@@ -19,6 +19,7 @@ int main(int argc, char **argv)
     uint32_t imgsz = *(uint32_t *)(file + pe + 24 + 56);
     g_base = mmap((void *)base, imgsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (g_base != (uint8_t *)base) { printf("mmap at image base failed\n"); return 1; }
+    memcpy(g_base, file, *(uint32_t *)(file + pe + 24 + 60));          /* the headers too: func_start reads the function table through them */
     for (int i = 0; i < nsec; i++) {
         uint8_t *sh = file + pe + 24 + opt + 40 * i;
         uint32_t vs = *(uint32_t *)(sh + 8), va = *(uint32_t *)(sh + 12), rs = *(uint32_t *)(sh + 16), raw = *(uint32_t *)(sh + 20);

@@ -64,6 +64,15 @@ summary=Squad members follow a running leader smoothly.
 - Followers no longer get a new move order every few metres while the leader runs, so their run is not restarted over and over.
 - The thresholds are in `gem_squadfollow.ini` (`MinDrift`, `MinIntervalMs`, `ForceDrift`).
 
+[gem_revivefilter]
+name=ReviveFilter
+group=Infantry and melee
+summary=Tags decide who may revive a downed soldier.
+- `revive_by_<class>` on a soldier (tag or def prop) lists the classes that may revive him. The reviver needs the tag `<class>`.
+- Example: a soldier with `revive_by_apothecary` is only revived by a unit tagged `apothecary`.
+- A soldier without a `revive_by_` tag is revived by anyone, as in the base game.
+- A refused revive command fires the script event `revive_refused` on the downed soldier, for an on-screen message.
+
 ; ---------------------------------------------------------------- creatures
 
 [gem_fauna]
@@ -105,6 +114,15 @@ summary=Tags decide who may crew or board a vehicle.
 - `no_board` on a vehicle lets nobody in.
 - Untagged vehicles and soldiers use the default class `mortal`.
 - A refused board order fires the script event `board_refused` on the vehicle, for an on-screen message.
+
+[gem_repairfilter]
+name=RepairFilter
+group=Vehicles and weapons
+summary=Tags decide who may repair a vehicle.
+- `repair_by_<class>` on a vehicle (tag or def prop) lists the classes that may repair it. The repairer needs the tag `<class>`.
+- Example: a vehicle with `repair_by_mechanicus` is only repaired by a unit tagged `mechanicus`.
+- A vehicle without a `repair_by_` tag is repaired by anyone, as in the base game.
+- A refused repair command fires the script event `repair_refused` on the vehicle, for an on-screen message.
 
 [gem_crewvoice]
 name=CrewVoice
@@ -184,6 +202,14 @@ name=CostRed
 group=Interface
 summary=Multiplayer buy menu: a cost you cannot afford is always red.
 - In vanilla the price only turns red under the mouse. Now every unit you cannot afford shows its MP / CP cost in red.
+
+[gem_unitname]
+name=UnitName
+group=Interface
+summary=Personal names for walkers, daemon engines and other units that are not soldiers.
+- A non-human unit whose def has a prop `name_<list>` shows a name in the name line of its unit panel.
+- The name comes from the localization lists `names/<list>/first` and `names/<list>/last`, the same format as soldier names.
+- A unit keeps its name for the whole match and after save / load. Soldiers keep their own names.
 
 ; ---------------------------------------------------------------- sound
 

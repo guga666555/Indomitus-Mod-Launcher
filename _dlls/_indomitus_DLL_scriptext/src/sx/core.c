@@ -134,12 +134,57 @@ static uint8_t *find_rip_ref(uint8_t *from, size_t n, const void *want)
     return NULL;
 }
 
-/* walk back from p to the start of its function = the first byte after the int3 padding before it (NULL if none) */
+/* ---- the exe's own function table (.pdata): one entry per function that has a stack frame ---- */
+typedef struct { uint32_t begin, end, unwind; } Rtf;
+static const Rtf *g_rtf; static uint32_t g_rtfN; static int g_rtfInit;
+
+static void rtf_init(void)
+{
+    g_rtfInit = 1;
+    if (g_base[0] != 'M' || g_base[1] != 'Z') return;
+    const uint8_t *nt = g_base + *(const uint32_t *)(g_base + 0x3C);
+    if (memcmp(nt, "PE\0\0", 4) || *(const uint16_t *)(nt + 24) != 0x20B) return;          /* PE32+ */
+    const uint8_t *dir = nt + 24 + 112 + 3 * 8;                                            /* data directory 3 = exception table */
+    uint32_t rva = *(const uint32_t *)dir, size = *(const uint32_t *)(dir + 4);
+    if (rva && size >= sizeof(Rtf)) { g_rtf = (const Rtf *)(g_base + rva); g_rtfN = size / (uint32_t)sizeof(Rtf); }
+}
+
+/* the entry whose [begin, end) holds the address, or NULL (a leaf function has none) */
+static const Rtf *rtf_find(const uint8_t *a)
+{
+    if (!g_rtfInit) rtf_init();
+    if (!g_rtf || a < g_base) return NULL;
+    uint32_t rva = (uint32_t)(a - g_base), lo = 0, hi = g_rtfN;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (rva < g_rtf[mid].begin) hi = mid; else if (rva >= g_rtf[mid].end) lo = mid + 1; else return &g_rtf[mid];
+    }
+    return NULL;
+}
+
+/* start of the function that contains p; NULL when the part of it that holds p starts maxback bytes or more before p.
+   Read from the function table; an entry that continues another one (a function the compiler split) is followed to the
+   first part. Up to 0.10.0 this was "the first byte after an int3 (0xCC) byte", and a 0xCC inside an instruction counts
+   as one too: in the editor of 17 Nov 2026 Entity::TalkEvent has  lea rdx,[rip+0xC5CC38]  before its OnTalkEvent call,
+   the guess landed in that instruction and the events were switched off. Only a leaf function (no table entry) still
+   uses the padding, and then never from inside a function the table knows. */
 static uint8_t *func_start(uint8_t *p, size_t maxback)
 {
+    const Rtf *e = rtf_find(p);
+    if (e) {
+        if ((size_t)(p - (g_base + e->begin)) >= maxback) return NULL;
+        Rtf cur = *e;
+        for (int hop = 0; hop < 8; hop++) {
+            const uint8_t *ui = g_base + cur.unwind;
+            if (!((ui[0] >> 3) & 4)) break;                               /* UNW_FLAG_CHAININFO: the parent entry follows the codes */
+            memcpy(&cur, ui + 4 + ((ui[2] + 1) & ~1) * 2, sizeof cur);
+        }
+        return g_base + cur.begin;
+    }
     for (size_t k = 0; k < maxback && p - k > g_text.p; k++) {
         uint8_t *q = p - k;
         if (q[-1] == 0xCC && q[0] != 0xCC) return q;
+        if (rtf_find(q - 1)) return q;                                    /* right after the function before it, no padding */
     }
     return NULL;
 }

@@ -84,7 +84,9 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_meleechase` | `_indomitus_DLL_meleechase` | fauna and vehicles chase melee targets |
 | `gem_meleestance` | `_indomitus_DLL_meleestance` | melee stance, charge and auto-draw |
 | `gem_noprone` | `_indomitus_DLL_gem_noprone\source` | `cannot_lie` units never go prone by AI decision |
+| `gem_repairfilter` | `_indomitus_DLL_repairfilter` | who may repair a vehicle, by `repair_by_` tags |
 | `gem_researchpath` | `_indomitus_DLL_research_path` | research tree: path highlight and "Requires" tooltip |
+| `gem_revivefilter` | `_indomitus_DLL_revivefilter` | who may revive a downed soldier, by `revive_by_` tags |
 | `gem_scriptext` | `_indomitus_DLL_scriptext` | script conditions, damage options and events |
 | `gem_sensortags` | `_indomitus_DLL_sensortags` | `sensor_off` / `no_target` tags |
 | `gem_sessiondump` | `_indomitus_DLL_sessiondump` | diagnostic: a minidump at every exit (shipped switched off) |
@@ -92,6 +94,7 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_teamsound` | `_indomitus_DLL_teamsound\src` | per-player sound variants (`@side`, `@army`, `@who`) |
 | `gem_teamtags` | `_indomitus_DLL_teamtags` | automatic `team<N>` tags by owning player |
 | `gem_teleport` | `_indomitus_DLL_teleport` | the `{teleport}` action (jetpacks) |
+| `gem_unitname` | `_indomitus_DLL_unitname` | personal names for units that are not soldiers, from `name_` def props |
 | `gem_usercontrol` | `_indomitus_DLL_usercontrol\src` | `user_control` tagged units go to their player |
 | `gem_weaponscript` | `_indomitus_DLL_new_weaponscript` | convergence, overcharge, guided projectiles |
 

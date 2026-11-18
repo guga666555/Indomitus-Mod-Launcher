@@ -51,7 +51,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define SX_VERSION "0.10.0"
+#define SX_VERSION "0.10.1"
 #define SX_NAME    "GEM ScriptExt"
 #define SX_INI     L"\\gem_scriptext.ini"
 #define SX_LOG     L"\\gem_scriptext.log"

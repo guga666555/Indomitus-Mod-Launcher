@@ -1,4 +1,4 @@
-# GEM ScriptExt 0.10.0
+# GEM ScriptExt 0.10.1
 
 Engine extender for **Call to Arms: Gates of Hell** (GEM engine, game 1.067). It adds script words to
 `interaction_entity` scripts: conditions, health actions, a damage multiplier and named events, and prop/tag words to
@@ -275,6 +275,11 @@ Verified on 1.067: game `6AB3DCC7`, editor `6AB3DD83`, server `6AB3DD21`.
 
 ## Changelog
 
+* **0.10.1** fix for the game build of 17 Nov 2026 (`1.0.6.9`): in the editor the talk events were off
+  (`events: Entity::TalkEvent not found`). The start of a function was taken as "the first byte after an int3 (0xCC)
+  byte", and that editor build has a 0xCC inside an instruction of `Entity::TalkEvent`. `func_start` (`sx/core.c`) now
+  reads the exe's own function table (`.pdata`); the padding is only used for a function that has no entry there.
+  No change in behaviour on the game and the server. The offline test maps the PE headers too.
 * **0.10.0** talk condition `{seen ...}`: any word other than the vanilla relation/class words is a prop or tag name
   (`{seen enemy daemon 1}`): the seen unit matches when its def props or its runtime tags contain it, OR'ed with the
   class words. ini: `seen_tags`. New host test `tests/seen_stub_test.c`.
