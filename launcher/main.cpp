@@ -3448,6 +3448,7 @@ static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 }
 
 // 1 = the game's mods folder, 2 = the Steam Workshop folder, 0 = cancelled.
+// -1 = the dialog could not be shown (the caller falls back to the message box at launch).
 static int AskModFolder(HWND owner, const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
 {
     static bool registered = false;
@@ -3502,7 +3503,7 @@ static void DoAction(int i)
     switch (i) {
     case ACT_GAME:
     case ACT_EDITOR: {
-        if (g_busy) return;
+        if (g_busy || g_ask) return;                              // g_ask: the mods folder question is open already
         const std::wstring& exe = (i == ACT_EDITOR) ? g_cfg.editorExe : g_cfg.exe;
         if (FindProcessByName(PathFindFileNameW(exe.c_str()))) {
             SetStatus(i == ACT_EDITOR ? L"st_editor_running" : L"st_game_running", true);
@@ -3515,7 +3516,7 @@ static void DoAction(int i)
             g_modFolderPick = 0;
             if (!loc.empty() && !shop.empty()) {
                 int pick = AskModFolder(g_wnd, loc, shop);
-                if (pick == 0) { Log(L"mods folder question cancelled - nothing started"); SetStatus(L"st_ready"); return; }
+                if (pick == 0) { Log(L"mods folder question cancelled - nothing started"); return; }   // the status line was not touched yet
                 if (pick > 0) g_modFolderPick = pick;             // -1 = no dialog: the message box asks at launch
                 if (g_busy) return;                               // something else started while the box was open
             }
