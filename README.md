@@ -98,15 +98,20 @@ step yet: copy `gem_fauna.dll` and `gem_fauna.ini` from its `dist\` folder by ha
 | `gem_usercontrol` | `_indomitus_DLL_usercontrol\src` | `user_control` tagged units go to their player |
 | `gem_weaponscript` | `_indomitus_DLL_new_weaponscript` | convergence, overcharge, guided projectiles |
 
-### Mods in two folders
+### The mod list
 
-When marked mods are found both in `<game>\mods` and in the Steam Workshop folder, PLAY and OPEN THE MAP EDITOR
-first ask which folder to load (`AskModFolder` in `launcher\main.cpp`); the marked mods of the other folder are
-taken out of the profile's mod list for that start. A folder with more than one marked mod gets a button that opens
-the mod selection: unticked mods are left out too, and the list is remembered in
-`%LocalAppData%\Indomitus Launcher\mods_off.txt`. A launcher started without its window (command line) asks with a
-plain Yes / No / Cancel box and ignores the selection. Texts: `mods_ask_*`, `mods_pick_*`, `mods_source_*` in
-`launcher\lang\*.ini`.
+Mods that carry the marker are looked for in `<game>\mods` and in the Steam Workshop folder. When this PC has more
+than one, PLAY and OPEN THE MAP EDITOR first show the mod list (`ChooseMods` in `launcher\main.cpp`): one row per
+mod with a tick box, its title from `mod.info`, its entry name and its folder. Ticked mods are enabled in the
+profile for that start and unticked ones are taken out of the profile's mod list; at least one stays on. Ticking
+"Save as my preset" stops the question: later starts use the saved ticks, until a marked mod turns up that the
+preset has no answer for. The CHOOSE THE MODS TO LOAD button, shown when there are two or more marked mods, opens the
+same list at any time.
+
+The ticks are kept in `%LocalAppData%\Indomitus Launcher\mod_list.txt` (`ask=`, then `on=` / `off=` per mod). With
+no ticks yet the list starts from the marked mods the game profile has enabled, else from one folder (the Workshop
+one when both have some: a mod in both folders is usually the same mod twice). A start from the command line shows
+no list and follows the same rules. Texts: `btn_mod_list`, `st_mod_list_*`, `mods_pick_*` in `launcher\lang\*.ini`.
 
 ## Versioning
 

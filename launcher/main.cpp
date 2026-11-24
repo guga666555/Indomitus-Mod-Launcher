@@ -6,7 +6,8 @@
 //      %LocalAppData%\Indomitus Launcher\payload\<fingerprint>\.
 //   2. Checks for a newer launcher (signed update.ini on a static https host) and offers it.
 //   3. On Play / Editor: makes sure Steam is running and logged in, switches the required mods on in
-//      the game profile, starts the exe suspended, queues LoadLibraryW(dll) as an APC on its main
+//      the game profile (with several of them, the ones ticked in the mod list), starts the exe
+//      suspended, queues LoadLibraryW(dll) as an APC on its main
 //      thread ("early bird": runs during loader init, before the game's entry point), resumes it,
 //      verifies every DLL is in, then hides itself until the game exits. While the game runs it
 //      watches for the multiplayer host server (call_to_arms_server.exe) the game starts and loads
@@ -257,7 +258,7 @@ struct Config {
     std::wstring args;
     std::wstring appid = L"400750";
     std::wstring soundHover, soundClick;   // "embedded", "none", or a .wav path
-    std::vector<std::wstring> requireMods; // marked mods found when the launcher opened (log only; Play/Disable scan again)
+    std::vector<std::wstring> requireMods; // marked mods found when the launcher opened (the log, the mod list button; Play/Disable scan again)
     std::wstring modsMarker = L"INDOMITUS MOD LAUNCHER";     // ini: mods_marker= (words in a mod.info {desc ""})
     bool         modsExclusive = false;    // true = enable ONLY those
     std::wstring modsProfile;              // profile folder id; empty = most recently used
@@ -747,48 +748,13 @@ static std::wstring ModInfoName(const std::wstring& modInfo)
     return Widen(t.substr(q1 + 1, q2 - q1 - 1));
 }
 
-// entry ("indomitus_001", "mod_123") -> the title from its mod.info, for the mod selection window (UI thread reads it
+// entry ("indomitus_001", "mod_123") -> the title from its mod.info, for the mod list (UI thread reads it
 // after a scan it made itself; the launch thread only writes the same values again)
 static std::vector<std::pair<std::wstring, std::wstring>> g_modTitles;
 static std::wstring ModTitle(const std::wstring& entry)
 {
     for (const auto& kv : g_modTitles) if (kv.first == entry) return kv.second;
     return L"";
-}
-
-// Marked mods the player switched off in the mod selection window (entries, lower case), kept in
-// %LocalAppData%\Indomitus Launcher\mods_off.txt, one per line. They only count on a start where the mods folder
-// question was shown, because that window is the only place to switch them back on.
-static std::vector<std::wstring> g_modsOff;
-static std::wstring ModsOffFile()
-{
-    std::wstring root = LauncherDataDir();
-    return root.empty() ? root : root + L"\\mods_off.txt";
-}
-static void LoadModsOff()
-{
-    g_modsOff.clear();
-    std::wstring f = ModsOffFile();
-    if (f.empty() || !PathFileExistsW(f.c_str())) return;
-    std::string t = ReadFileA(f), line;
-    for (size_t i = 0; i <= t.size(); i++) {
-        if (i < t.size() && t[i] != '\n' && t[i] != '\r') { line += t[i]; continue; }
-        if (!line.empty() && line.size() < 128) g_modsOff.push_back(Widen(line));
-        line.clear();
-    }
-}
-static void SaveModsOff()
-{
-    std::wstring f = ModsOffFile();
-    if (f.empty()) return;
-    std::string t;
-    for (const auto& e : g_modsOff) t += Utf8(e) + "\r\n";
-    if (t.empty()) DeleteFileW(f.c_str());
-    else if (!WriteFileAtomic(f, t)) Log(L"mods: could not write %ls", f.c_str());
-}
-static bool ModIsOff(const std::wstring& entry)
-{
-    return std::find(g_modsOff.begin(), g_modsOff.end(), entry) != g_modsOff.end();
 }
 
 static void ScanMarkedMods(const std::wstring& dir, const wchar_t* prefix, const std::string& markerKey, std::vector<std::wstring>& out, bool log)
@@ -894,60 +860,127 @@ static bool IsModEntry(const std::string& e, const std::vector<std::string>& mod
     return false;
 }
 
-// Marked mods found both in <game>\mods and in the Steam Workshop folder are two copies of Indomitus (the local one is
-// the developer's working copy). Loading both loads everything twice, so the player picks one for this start.
-// Returns 1 = local, 2 = workshop, 0 = cancelled.
-static int AskModSource(const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
+// ---- which marked mods are enabled
+// The player ticks them in the launcher's mod list (ui::ChooseMods: shown by PLAY / EDITOR, or opened with its own
+// button). The ticks are kept in %LocalAppData%\Indomitus Launcher\mod_list.txt:
+//     ask=0                  0 = saved as the player's preset: PLAY / EDITOR start without showing the list
+//     on=indomitus_002       one line per mod the player has answered for
+//     off=mod_3816845694
+struct ModChoice {
+    bool ask = true;                                          // show the list at PLAY / EDITOR
+    std::vector<std::pair<std::wstring, bool>> mods;          // entry (lower case) -> ticked
+    const bool* Find(const std::wstring& entry) const
+    {
+        for (const auto& m : mods) if (m.first == entry) return &m.second;
+        return nullptr;
+    }
+    void Set(const std::wstring& entry, bool on)
+    {
+        for (auto& m : mods) if (m.first == entry) { m.second = on; return; }
+        mods.emplace_back(entry, on);
+    }
+};
+
+static std::wstring ModChoiceFile()
 {
-    auto list = [](const std::vector<std::wstring>& v) {
-        std::wstring t;
-        for (const auto& e : v) { if (!t.empty()) t += L", "; t += e; }
-        return t;
-    };
-    std::wstring text = T(L"mods_source_prompt");
-    const std::pair<const wchar_t*, std::wstring> fill[] = { { L"{local}", list(local) }, { L"{workshop}", list(workshop) }, { L"\\n", L"\n" } };
-    for (const auto& f : fill)
-        for (size_t at = 0; (at = text.find(f.first, at)) != std::wstring::npos; at += f.second.size())
-            text.replace(at, wcslen(f.first), f.second);
-    UINT rtl = g_langMeta[g_lang].rtl ? (MB_RTLREADING | MB_RIGHT) : 0;
-    int a = MessageBoxW(GetActiveWindow(), text.c_str(), T(L"mods_source_title").c_str(),
-                        MB_YESNOCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST | rtl);
-    return a == IDYES ? 1 : a == IDNO ? 2 : 0;
+    std::wstring root = LauncherDataDir();
+    return root.empty() ? root : root + L"\\mod_list.txt";
 }
 
-// Set by the launcher window, which asks the same question in its own dialog before it starts the launch
-// (1 = the game's mods folder, 2 = the workshop folder). 0 = not asked yet: EnsureModsEnabled asks with a message box.
-static int g_modFolderPick = 0;
+static ModChoice LoadModChoice()
+{
+    ModChoice c;
+    std::wstring f = ModChoiceFile();
+    if (f.empty() || !PathFileExistsW(f.c_str())) return c;
+    for (const auto& kv : ParseKvText(ReadFileA(f))) {
+        bool on = !_wcsicmp(kv.first.c_str(), L"on");
+        if (!_wcsicmp(kv.first.c_str(), L"ask")) { c.ask = kv.second != L"0"; continue; }
+        if ((!on && _wcsicmp(kv.first.c_str(), L"off")) || kv.second.empty() || kv.second.size() >= 128 || c.mods.size() >= 512) continue;
+        std::wstring entry = kv.second;
+        for (auto& ch : entry) ch = towlower(ch);
+        c.Set(entry, on);
+    }
+    return c;
+}
+
+static bool SaveModChoice(const ModChoice& c)
+{
+    std::wstring f = ModChoiceFile();
+    if (f.empty()) { Log(L"mod list: no folder to keep it in"); return false; }
+    std::string t = c.ask ? "ask=1\r\n" : "ask=0\r\n";
+    for (const auto& m : c.mods) t += (m.second ? "on=" : "off=") + Utf8(m.first) + "\r\n";
+    if (!WriteFileAtomic(f, t)) { Log(L"mod list: could not write %ls", f.c_str()); return false; }
+    DeleteFileW((LauncherDataDir() + L"\\mods_off.txt").c_str());   // the list launcher 1.0.3 kept; this file replaces it
+    return true;
+}
+
+// The mods of the game profile's {mods} list (lower case, without the ":n" suffix). Empty when there is no profile yet.
+static std::vector<std::wstring> ProfileModNames(const Config& cfg)
+{
+    std::vector<std::wstring> out;
+    std::wstring opt = FindOptionsSet(cfg);
+    if (opt.empty() || !PathFileExistsW(opt.c_str())) return out;
+    ModsBlock blk;
+    if (!FindModsBlock(ReadFileA(opt), blk)) return out;
+    for (const auto& e : blk.entries) out.push_back(Widen(AsciiLower(e.substr(0, e.find(':')))));
+    return out;
+}
+
+// Which of the marked mods found now are enabled: one flag per entry of `all` (`local` / `workshop` = the same entries
+// by folder).
+//  - A mod the player has ticked or unticked before keeps that answer.
+//  - A mod that appeared since then follows its folder: on when a mod of that folder is on, or when nothing is on.
+//  - With no answer for any of them (the first start with the list): the marked mods the game profile has enabled
+//    now; when it has none, every mod of one folder (the workshop one when both have some: a mod in both folders is
+//    usually the same mod twice, and loading both loads everything twice).
+//  - Never everything off: then one folder, as above.
+// complete (optional): every mod had an answer of its own, so the player has nothing new to look at.
+static std::vector<char> ResolveModChoice(const Config& cfg, const ModChoice& c, const std::vector<std::wstring>& all,
+                                          const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop,
+                                          bool* complete = nullptr)
+{
+    auto in = [](const std::vector<std::wstring>& v, const std::wstring& e) { return std::find(v.begin(), v.end(), e) != v.end(); };
+    std::vector<char> on(all.size(), 0), known(all.size(), 0);
+    bool anyKnown = false, full = true, anyOn = false;
+    for (size_t i = 0; i < all.size(); ++i) {
+        if (const bool* b = c.Find(all[i])) { on[i] = *b ? 1 : 0; known[i] = 1; anyKnown = true; }
+        else full = false;
+    }
+    if (!anyKnown) {
+        const std::vector<std::wstring> profile = ProfileModNames(cfg);
+        for (size_t i = 0; i < all.size(); ++i) on[i] = in(profile, all[i]) ? 1 : 0;
+    } else if (!full) {
+        bool locOn = false, shopOn = false;
+        for (size_t i = 0; i < all.size(); ++i) if (on[i]) (in(local, all[i]) ? locOn : shopOn) = true;
+        for (size_t i = 0; i < all.size(); ++i)
+            if (!known[i]) on[i] = ((in(local, all[i]) ? locOn : shopOn) || (!locOn && !shopOn)) ? 1 : 0;
+    }
+    for (char f : on) if (f) anyOn = true;
+    if (!anyOn) {
+        const std::vector<std::wstring>& folder = workshop.empty() ? local : workshop;
+        for (size_t i = 0; i < all.size(); ++i) on[i] = in(folder, all[i]) ? 1 : 0;
+        full = false;
+    }
+    if (complete) *complete = full;
+    return on;
+}
 
 // Returns true when the profile is ready (already fine or updated). err gets a message otherwise.
-// cancelled (optional) is set when the player closed the "which copy" question: nothing was changed, do not start.
-static bool EnsureModsEnabled(const Config& cfg, std::wstring& err, bool* cancelled = nullptr)
+static bool EnsureModsEnabled(const Config& cfg, std::wstring& err)
 {
-    if (cancelled) *cancelled = false;
     // Scan again now: mod.info files may have changed since the launcher opened.
     std::vector<std::string> wanted, unwanted;
     std::vector<std::wstring> local, workshop;
-    for (const auto& m : FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker, &local, &workshop)) wanted.push_back(Utf8(m));
-    if (wanted.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
-    if (!local.empty() && !workshop.empty()) {
-        int pick = g_modFolderPick ? g_modFolderPick : AskModSource(local, workshop);
-        if (!pick) {
-            Log(L"mods: marked mods exist locally and in the workshop folder; the question was cancelled - not starting");
-            if (cancelled) *cancelled = true;
-            return true;
+    const std::vector<std::wstring> all = FindMarkedMods(cfg.exe, cfg.appid, cfg.modsMarker, &local, &workshop);
+    if (all.empty()) { Log(L"no marked mods - the profile mod list is left alone"); return true; }
+    {   // the player's mod list says which of them are enabled; the others leave the profile's list for this start
+        const std::vector<char> on = ResolveModChoice(cfg, LoadModChoice(), all, local, workshop);
+        std::wstring left;
+        for (size_t i = 0; i < all.size(); ++i) {
+            (on[i] ? wanted : unwanted).push_back(Utf8(all[i]));
+            if (!on[i]) left += (left.empty() ? L"" : L", ") + all[i];
         }
-        const auto& use = pick == 1 ? local : workshop;
-        const auto& drop = pick == 1 ? workshop : local;
-        wanted.clear();
-        int off = 0;
-        if (g_modFolderPick)                                      // asked in the launcher's own window: its mod selection counts
-            for (const auto& m : use) if (ModIsOff(m)) ++off;
-        if (off == (int)use.size()) off = 0;                      // never start with every mod of the folder switched off
-        for (const auto& m : use) (off && ModIsOff(m) ? unwanted : wanted).push_back(Utf8(m));
-        for (const auto& m : drop) unwanted.push_back(Utf8(m));
-        if (off) Log(L"mods: %d mod(s) of that folder are switched off in the mod selection", off);
-        Log(L"mods: marked mods exist locally and in the workshop folder; the player chose the %ls folder (%d mod(s) used, %d left out)",
-            pick == 1 ? L"game mods" : L"workshop", (int)use.size(), (int)drop.size());
+        if (!unwanted.empty()) Log(L"mod list: %d of %d marked mod(s) enabled; left out: %ls", (int)wanted.size(), (int)all.size(), left.c_str());
     }
     std::wstring opt = FindOptionsSet(cfg);
     if (opt.empty() || !PathFileExistsW(opt.c_str())) {
@@ -1748,8 +1781,6 @@ static void ServerWatchStart(DWORD gamePid, const std::wstring& exeDir)
 // Starts `exe` suspended, injects, resumes, verifies. On success returns 0 and hands back the
 // process handle (caller waits on it / closes it). On failure returns a non-zero code after
 // showing the error.
-enum { RC_LAUNCH_CANCELLED = 99 };   // the player cancelled a question asked before the start: no error, nothing started
-
 static int StartAndInject(const std::wstring& exe, const std::vector<std::wstring>& dlls, const std::wstring& args,
                           const std::wstring& appid, HANDLE& outProcess)
 {
@@ -1766,9 +1797,7 @@ static int StartAndInject(const std::wstring& exe, const std::vector<std::wstrin
 
     {
         std::wstring err;
-        bool cancelled = false;
-        if (!EnsureModsEnabled(g_cfg, err, &cancelled)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
-        if (cancelled) return RC_LAUNCH_CANCELLED;
+        if (!EnsureModsEnabled(g_cfg, err)) return Fail(8, L"Could not enable the required mods:\n%ls", err.c_str());
         EnsureHotkeys(g_cfg);
     }
 
@@ -2402,10 +2431,10 @@ enum { WM_LAUNCH_DONE = WM_APP + 1, WM_PROCESS_EXITED = WM_APP + 2, WM_SET_STATU
        WM_UPDATE_FOUND = WM_APP + 5, WM_UPDATE_PROGRESS = WM_APP + 6, WM_UPDATE_READY = WM_APP + 7,
        WM_UPDATE_CHECKED = WM_APP + 8 };   // wp: 0 = up to date, 1 = could not check
 enum { TIMER_TOAST = 1 };
-enum Action { ACT_GAME = 0, ACT_EDITOR, ACT_OPEN_MODS, ACT_DISABLE_MODS, ACT_FEATURES, ACT_QUIT, ACT_COUNT };
+enum Action { ACT_GAME = 0, ACT_EDITOR, ACT_MOD_LIST, ACT_OPEN_MODS, ACT_DISABLE_MODS, ACT_FEATURES, ACT_QUIT, ACT_COUNT };
 
 static const wchar_t* kTitle = L"INDOMITUS";
-static const wchar_t* kButtonKey[ACT_COUNT] = { L"btn_game", L"btn_editor", L"btn_mods", L"btn_disable_mods", L"btn_features", L"btn_quit" };
+static const wchar_t* kButtonKey[ACT_COUNT] = { L"btn_game", L"btn_editor", L"btn_mod_list", L"btn_mods", L"btn_disable_mods", L"btn_features", L"btn_quit" };
 
 // Logical layout (96 dpi). Everything is scaled by g_dpi.
 static const int LW = 960, LH = 600;
@@ -2516,6 +2545,7 @@ static void LoadTitleFont()
 
 static int     g_hover = -1, g_pressed = -1;
 static bool    g_tracking = false, g_busy = false;
+static int     g_markedMods = 0;         // marked mods found by the last scan: the mod list button shows with two or more
 static std::wstring g_statusKey;
 static std::wstring g_statusArg;     // replaces {v} in the status text (version, percentage)
 static bool    g_statusError = false;
@@ -2669,20 +2699,22 @@ static void DrawFlag(HDC dc, int i, const RECT& r)
 
 static bool ButtonVisible(int i)
 {
+    if (i == ACT_MOD_LIST)     return g_markedMods > 1;              // one marked mod: nothing to choose
     if (i == ACT_OPEN_MODS)    return g_cfg.showModFolderButton;
     if (i == ACT_DISABLE_MODS) return g_cfg.showDisableModsButton;   // the click scans mod.info files itself
     if (i == ACT_FEATURES)     return g_cfg.showFeaturesButton;
     return true;
 }
 
-// Button height and gap (logical px). Five buttons fill the column at the designed size (42 + 12); with a
-// sixth they are made a little lower and closer, so the column still ends above the description panel.
+// Button height and gap (logical px). Five buttons fill the column at the designed size (42 + 12); with more they
+// are made lower and closer, so the column still ends above the description panel.
 static void ButtonMetrics(int& h, int& gap)
 {
     int n = 0;
     for (int k = 0; k < ACT_COUNT; ++k) if (ButtonVisible(k)) ++n;
     h = 42; gap = 12;
-    if (n > 5) { gap = 8; h = (5 * 42 + 4 * 12 - (n - 1) * gap) / n; }
+    if (n == 6) { gap = 8; h = 36; }
+    if (n > 6)  { gap = 6; h = (266 - (n - 1) * gap) / n; }
 }
 
 static RECT ButtonRect(int i)
@@ -3241,12 +3273,6 @@ static DWORD WINAPI LaunchThread(LPVOID p)
     }
 
     int rc = StartAndInject(exe, g_cfg.dlls, job->editor ? L"" : g_cfg.args, g_cfg.appid, hProcess);
-    if (rc == RC_LAUNCH_CANCELLED) {
-        PostMessageW(g_wnd, WM_SET_STATUS, (WPARAM)L"st_ready", 0);
-        PostMessageW(g_wnd, WM_LAUNCH_ABORTED, 0, 0);
-        delete job;
-        return 0;
-    }
     PostMessageW(g_wnd, WM_LAUNCH_DONE, (WPARAM)rc, 0);
     if (rc == 0 && hProcess) {
         if (g_cfg.waitForExit) {
@@ -3364,9 +3390,8 @@ static void RequestClose()
     SetStatus(L"st_cancelling");
 }
 
-// ---- the launcher's own dialogs, drawn like its window: "which mods folder?" (asked at PLAY / EDITOR when marked mods
-//      are found both in <game>\mods and in the Steam Workshop folder) and the mod selection it opens.
-//      Both are modal: their owner is disabled while they are open.
+// ---- the launcher's own dialog, drawn like its window: the mod list (shown by PLAY / EDITOR when this PC has more
+//      than one marked mod and no saved preset, and by the mod list button). Modal: its owner is disabled while it is open.
 
 // Shows dlg over its disabled owner and runs messages until result leaves -1. Destroys dlg.
 static void RunModal(HWND dlg, HWND owner, int& result)
@@ -3399,8 +3424,13 @@ static HWND CreateDialogWindow(const wchar_t* cls, WNDPROC proc, HWND owner, int
         if (!RegisterClassExW(&wc)) return nullptr;
     }
     RECT o{}; GetWindowRect(owner, &o);
-    return CreateWindowExW(0, cls, L"Indomitus", WS_POPUP, o.left + ((o.right - o.left) - w) / 2, o.top + ((o.bottom - o.top) - h) / 2,
-                           w, h, owner, nullptr, hi, nullptr);
+    int x = o.left + ((o.right - o.left) - w) / 2, y = o.top + ((o.bottom - o.top) - h) / 2;
+    MONITORINFO mi{ sizeof(mi) };                                  // centred on the owner, but never off its screen
+    if (GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &mi)) {
+        x = (std::max)((int)mi.rcWork.left, (std::min)(x, (int)mi.rcWork.right - w));
+        y = (std::max)((int)mi.rcWork.top, (std::min)(y, (int)mi.rcWork.bottom - h));
+    }
+    return CreateWindowExW(0, cls, L"Indomitus", WS_POPUP, x, y, w, h, owner, nullptr, hi, nullptr);
 }
 
 // dark panel with the double green frame; returns the memory DC to draw on (finish with DialogBlit)
@@ -3450,317 +3480,192 @@ static int DialogTextHeight(HDC dc, HFONT f, const std::wstring& t, int width)
     return r.bottom - r.top;
 }
 
-// ---- mod selection: one row per marked mod of a folder, ticked = enabled at the start
-struct PickMods {
-    std::wstring title, text, ok, cancel;
-    std::vector<std::wstring> ids, names;
-    std::vector<char> on;
-    std::vector<RECT> row;
-    RECT btnOk{}, btnCancel{};
-    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;       // hover / pressed: row index, n = OK, n + 1 = Cancel
-    bool AnyOn() const { for (char c : on) if (c) return true; return false; }
-};
-static PickMods* g_pick = nullptr;
-
-static int PickHit(POINT p)
+// a tick box, ticked or not (hot = the pointer is on it or on its row)
+static void DialogTickBox(HDC mem, const RECT& box, bool on, bool hot = false)
 {
-    PickMods& a = *g_pick;
-    int n = (int)a.row.size();
-    for (int i = 0; i < n; i++) if (PtInRect(&a.row[i], p)) return i;
-    if (PtInRect(&a.btnOk, p)) return a.AnyOn() ? n : -1;
-    if (PtInRect(&a.btnCancel, p)) return n + 1;
+    int cy = (box.top + box.bottom) / 2;
+    FillRectC(mem, box.left, box.top, box.right, box.bottom, RGB(3, 22, 9));
+    StrokeRound(mem, box, 0, on || hot ? C_BTN_GLOW : RGB(70, 150, 100), 1);
+    if (!on) return;
+    HPEN pen = CreatePen(PS_SOLID, S(2), C_BTN_GLOW);
+    HGDIOBJ op = SelectObject(mem, pen);
+    MoveToEx(mem, box.left + S(4), cy, nullptr);
+    LineTo(mem, box.left + S(8), cy + S(5));
+    LineTo(mem, box.right - S(3), cy - S(6));
+    SelectObject(mem, op);
+    DeleteObject(pen);
+}
+
+// ---- the mod list: one row per marked mod of this PC (the game's mods folder and the Steam Workshop folder together),
+//      ticked = enabled at the start, and a box that saves the ticks as the player's preset
+struct ModList {
+    std::wstring title, text, changed, twice, save, ok, cancel;
+    std::vector<std::wstring> ids, names, subs;              // entry, first line (mod.info title, else the entry), second line
+    std::vector<char> on, local;                             // ticked; found in the game's mods folder (else the workshop folder)
+    bool saveOn = false, showChanged = false;                // the preset box; the "your mods have changed" note
+    int  top = 0, shown = 0, wheel = 0;                      // first row in view, rows in view, wheel movement not used yet
+    RECT list{}, saveRow{}, btnOk{}, btnCancel{};            // list: the rows in view
+    int  notesY = 0;
+    int  w = 0, h = 0, hover = -1, pressed = -1, result = -1;   // hover / pressed: a row, n = the preset box, n + 1 = OK, n + 2 = Cancel
+    int  Count() const { return (int)ids.size(); }
+    bool AnyOn() const { for (char c : on) if (c) return true; return false; }
+    bool Twice() const                                       // a ticked mod of each folder with one title: most likely the same mod twice
+    {
+        for (size_t i = 0; i < ids.size(); i++)
+            for (size_t k = 0; k < ids.size(); k++)
+                if (on[i] && on[k] && local[i] && !local[k] && !_wcsicmp(names[i].c_str(), names[k].c_str())) return true;
+        return false;
+    }
+};
+static ModList* g_modList = nullptr;
+enum { MODLIST_ROW_H = 46, MODLIST_ROW_GAP = 8, MODLIST_MAX_ROWS = 6 };   // logical px; more mods than rows scroll
+
+static RECT ModListRow(int i)                                 // empty for a row that is scrolled out of view
+{
+    const ModList& a = *g_modList;
+    if (i < a.top || i >= a.top + a.shown) return RECT{ 0, 0, 0, 0 };
+    int y = a.list.top + (i - a.top) * (S(MODLIST_ROW_H) + S(MODLIST_ROW_GAP));
+    return RECT{ a.list.left, y, a.list.right, y + S(MODLIST_ROW_H) };
+}
+
+static int ModListHit(POINT p)
+{
+    const ModList& a = *g_modList;
+    int n = a.Count();
+    for (int i = a.top; i < a.top + a.shown && i < n; i++) { RECT r = ModListRow(i); if (PtInRect(&r, p)) return i; }
+    if (PtInRect(&a.saveRow, p)) return n;
+    if (PtInRect(&a.btnOk, p)) return a.AnyOn() ? n + 1 : -1;
+    if (PtInRect(&a.btnCancel, p)) return n + 2;
     return -1;
 }
 
-static void PickLayout(HDC dc)
+// Places everything for a.shown rows in view and the notes that apply to the ticks as they are now.
+static void ModListLayout(HDC dc)
 {
-    PickMods& a = *g_pick;
-    a.w = S(500);
-    int pad = S(26), y = pad;
-    y += DialogTextHeight(dc, g_fButton, a.title, a.w - 2 * pad) + S(12);
-    y += DialogTextHeight(dc, g_fSub, a.text, a.w - 2 * pad) + S(18);
-    a.row.clear();
-    for (size_t i = 0; i < a.ids.size(); i++) { a.row.push_back(RECT{ pad, y, a.w - pad, y + S(46) }); y += S(46) + S(8); }
-    y += S(12);
-    int bw = (a.w - 2 * pad - S(16)) / 2;
+    ModList& a = *g_modList;
+    a.w = S(540);
+    int pad = S(26), y = pad, tw = a.w - 2 * pad;
+    y += DialogTextHeight(dc, g_fButton, a.title, tw) + S(12);
+    y += DialogTextHeight(dc, g_fSub, a.text, tw) + S(16);
+    a.list = RECT{ pad, y, a.w - pad - (a.Count() > a.shown ? S(14) : 0), y + a.shown * S(MODLIST_ROW_H) + (a.shown - 1) * S(MODLIST_ROW_GAP) };
+    y = a.list.bottom + S(14);
+    a.notesY = y;                                                  // under the rows, so a note that comes or goes never moves them
+    if (a.showChanged) y += DialogTextHeight(dc, g_fSub, a.changed, tw) + S(8);
+    if (a.Twice())     y += DialogTextHeight(dc, g_fSub, a.twice, tw) + S(8);
+    int sh = (std::max)(S(20), DialogTextHeight(dc, g_fSub, a.save, tw - S(20) - S(12)));
+    a.saveRow = RECT{ pad, y, a.w - pad, y + sh + S(8) };
+    y = a.saveRow.bottom + S(14);
+    int bw = (tw - S(16)) / 2;
     a.btnOk     = RECT{ pad, y, pad + bw, y + S(38) };
     a.btnCancel = RECT{ a.w - pad - bw, y, a.w - pad, y + S(38) };
     a.h = y + S(38) + pad;
 }
 
-static void PickPaint(HWND hwnd, HDC dc)
+static void ModListPaint(HWND hwnd, HDC dc)
 {
-    PickMods& a = *g_pick;
+    const ModList& a = *g_modList;
     RECT c; GetClientRect(hwnd, &c);
     HBITMAP bmp; HGDIOBJ ob;
     HDC mem = DialogBegin(dc, c, bmp, ob);
     bool rtl = g_langMeta[g_lang].rtl;
-    UINT align = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_WORDBREAK | DT_NOPREFIX;
-    int pad = S(26), y = pad, n = (int)a.row.size();
+    UINT side = rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT;
+    UINT wrap = side | DT_WORDBREAK | DT_NOPREFIX, one = side | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
+    int pad = S(26), y = pad, n = a.Count(), bs = S(20);
     HGDIOBJ of = SelectObject(mem, g_fButton);
     SetTextColor(mem, C_TITLE);
     RECT tr{ pad, y, c.right - pad, c.bottom };
-    y += DrawTextW(mem, a.title.c_str(), -1, &tr, align) + S(12);
+    y += DrawTextW(mem, a.title.c_str(), -1, &tr, wrap) + S(12);
     SelectObject(mem, g_fSub);
     SetTextColor(mem, C_TEXT_DIM);
     RECT br{ pad, y, c.right - pad, c.bottom };
-    DrawTextW(mem, a.text.c_str(), -1, &br, align);
-    SelectObject(mem, of);
+    DrawTextW(mem, a.text.c_str(), -1, &br, wrap);
 
-    for (int i = 0; i < n; i++) {
-        const RECT& r = a.row[i];
+    for (int i = a.top; i < a.top + a.shown && i < n; i++) {
+        RECT r = ModListRow(i);
         bool hov = a.hover == i, on = a.on[i] != 0;
         FillRoundAlpha(mem, r, S(8), hov ? C_BTN_HOV : C_BTN_FILL, hov ? 150 : (on ? 170 : 70));
         StrokeRound(mem, r, S(8), hov ? C_BTN_GLOW : (on ? C_BTN_EDGE : RGB(50, 120, 75)), 1);
-        int bs = S(20), cy = (r.top + r.bottom) / 2;
+        int cy = (r.top + r.bottom) / 2;
         RECT box{ rtl ? r.right - S(14) - bs : r.left + S(14), cy - bs / 2, 0, cy - bs / 2 + bs };
         box.right = box.left + bs;
-        FillRectC(mem, box.left, box.top, box.right, box.bottom, RGB(3, 22, 9));
-        StrokeRound(mem, box, 0, on ? C_BTN_GLOW : RGB(70, 150, 100), 1);
-        if (on) {                                                  // the tick
-            HPEN pen = CreatePen(PS_SOLID, S(2), C_BTN_GLOW);
-            HGDIOBJ op = SelectObject(mem, pen);
-            MoveToEx(mem, box.left + S(4), cy, nullptr);
-            LineTo(mem, box.left + S(8), cy + S(5));
-            LineTo(mem, box.right - S(3), cy - S(6));
-            SelectObject(mem, op);
-            DeleteObject(pen);
-        }
+        DialogTickBox(mem, box, on);
         RECT nr{ r.left + S(14) + bs + S(12), r.top + S(5), r.right - S(12), r.top + S(26) };
         RECT ir{ nr.left, r.top + S(26), nr.right, r.bottom - S(3) };
         if (rtl) { nr.left = ir.left = r.left + S(12); nr.right = ir.right = r.right - S(14) - bs - S(12); }
-        UINT one = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
-        bool named = !a.names[i].empty();
-        HGDIOBJ f1 = SelectObject(mem, g_fSub);
+        SelectObject(mem, g_fSub);
         SetTextColor(mem, on ? C_TEXT : RGB(120, 175, 140));
-        if (!named) { nr.top = r.top; nr.bottom = r.bottom; one |= DT_VCENTER; }
-        DrawTextW(mem, (named ? a.names[i] : a.ids[i]).c_str(), -1, &nr, one);
-        if (named) {
-            SelectObject(mem, g_fSmall);
-            SetTextColor(mem, on ? C_TEXT_DIM : RGB(90, 140, 110));
-            DrawTextW(mem, a.ids[i].c_str(), -1, &ir, one);
-        }
-        SelectObject(mem, f1);
+        DrawTextW(mem, a.names[i].c_str(), -1, &nr, one);
+        SelectObject(mem, g_fSmall);
+        SetTextColor(mem, on ? C_TEXT_DIM : RGB(90, 140, 110));
+        DrawTextW(mem, a.subs[i].c_str(), -1, &ir, one);
     }
-    bool any = a.AnyOn();
-    DialogButton(mem, a.btnOk, any && a.hover == n, any && a.hover == n && a.pressed == n, any, 215);
-    DialogButtonLabel(mem, a.btnOk, a.ok, any && a.hover == n && a.pressed == n, any);
-    DialogButton(mem, a.btnCancel, a.hover == n + 1, a.hover == n + 1 && a.pressed == n + 1, true, 150);
-    DialogButtonLabel(mem, a.btnCancel, a.cancel, a.hover == n + 1 && a.pressed == n + 1, true);
-    DialogBlit(dc, c, mem, bmp, ob);
-}
-
-static LRESULT CALLBACK PickProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
-{
-    if (!g_pick) return DefWindowProcW(hwnd, msg, wp, lp);
-    PickMods& a = *g_pick;
-    int n = (int)a.row.size();
-    POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
-    switch (msg) {
-    case WM_ERASEBKGND: return 1;
-    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); PickPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
-    case WM_NCHITTEST: {                                           // drag the box by anything that is not a row or a button
-        ScreenToClient(hwnd, &p);
-        return PtInRect(&a.btnOk, p) || PickHit(p) != -1 ? HTCLIENT : HTCAPTION;
+    if (n > a.shown) {                                             // scroll bar: where the rows in view are in the whole list
+        RECT t{ c.right - pad - S(6), a.list.top, c.right - pad, a.list.bottom };
+        int th = t.bottom - t.top, len = (std::max)(S(24), th * a.shown / n), off = (th - len) * a.top / (n - a.shown);
+        FillRectC(mem, t.left, t.top, t.right, t.bottom, RGB(3, 22, 9));
+        FillRectC(mem, t.left, t.top + off, t.right, t.top + off + len, C_BTN_EDGE);
     }
-    case WM_NCMOUSEMOVE:
-    case WM_MOUSELEAVE:
-        if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
-        break;
-    case WM_MOUSEMOVE: {
-        int h = PickHit(p);
-        if (h != a.hover) {
-            a.hover = h;
-            if (h != -1) PlaySoundSpec(g_cfg.soundHover, RES_SOUND_HOVER);
-            InvalidateRect(hwnd, nullptr, FALSE);
-            TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 };
-            TrackMouseEvent(&t);
-        }
-        return 0;
-    }
-    case WM_LBUTTONDOWN:
-        a.pressed = PickHit(p);
-        if (a.pressed != -1) { SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
-        return 0;
-    case WM_LBUTTONUP: {
-        int was = a.pressed;
-        a.pressed = -1;
-        if (GetCapture() == hwnd) ReleaseCapture();
-        if (was != -1 && PickHit(p) == was) {
-            PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
-            if (was < n) a.on[was] = !a.on[was];
-            else a.result = was == n ? 1 : 0;
-        }
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-    }
-    case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) a.result = 0;
-        else if (wp == VK_RETURN && a.AnyOn()) a.result = 1;
-        return 0;
-    case WM_CLOSE:
-        a.result = 0;
-        return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
 
-// Lets the player tick the mods of one folder. true = the selection changed (it is saved already).
-static bool PickModsOf(HWND owner, const std::wstring& folderLabel, const std::vector<std::wstring>& mods)
-{
-    if (g_pick) return false;
-    PickMods a;
-    a.title  = T(L"mods_pick_title") + L" - " + folderLabel;
-    a.text   = ReplaceAll(T(L"mods_pick_text"), L"\\n", L"\n");
-    a.ok     = T(L"mods_pick_ok");
-    a.cancel = T(L"mods_ask_cancel");
-    for (const auto& e : mods) { a.ids.push_back(e); a.names.push_back(ModTitle(e)); a.on.push_back(ModIsOff(e) ? 0 : 1); }
-    if (!a.AnyOn()) for (auto& c : a.on) c = 1;                    // a stale list that switches everything off
-    std::vector<char> before = a.on;
-    g_pick = &a;
-    HDC sdc = GetDC(owner);
-    PickLayout(sdc);
-    ReleaseDC(owner, sdc);
-    HWND hwnd = CreateDialogWindow(L"IndomitusPickMods", PickProc, owner, a.w, a.h);
-    if (!hwnd) { g_pick = nullptr; Log(L"mod selection: could not create the window (%ls)", LastErrorText().c_str()); return false; }
-    RunModal(hwnd, owner, a.result);
-    g_pick = nullptr;
-    if (a.result != 1 || a.on == before) return false;
-    std::wstring off;
-    for (size_t i = 0; i < a.ids.size(); i++) {
-        g_modsOff.erase(std::remove(g_modsOff.begin(), g_modsOff.end(), a.ids[i]), g_modsOff.end());
-        if (!a.on[i]) { g_modsOff.push_back(a.ids[i]); off += (off.empty() ? L"" : L", ") + a.ids[i]; }
-    }
-    SaveModsOff();
-    Log(L"mod selection (%ls): switched off: %ls", folderLabel.c_str(), off.empty() ? L"(none)" : off.c_str());
-    return true;
-}
-
-// ---- "which mods folder?"
-struct AskFolder {
-    std::wstring title, text, label[3], sub[2];      // 0 = game mods folder, 1 = workshop folder, 2 = cancel
-    const std::vector<std::wstring>* mods[2]{};
-    RECT btn[3]{}, pick[2]{};                        // pick: the "choose the mods" button inside a folder button (more than one mod)
-    int w = 0, h = 0, hover = -1, pressed = -1, result = -1;   // hover / pressed: 0..2 = btn, 3..4 = pick; result: -1 open, 0 cancel, 1 local, 2 workshop
-};
-static AskFolder* g_ask = nullptr;
-
-static bool AskHasPick(int i) { return g_ask->mods[i] && g_ask->mods[i]->size() > 1; }
-
-// the mods of a folder that will be enabled, and "n / m" when some are switched off
-static void AskRefreshSubs()
-{
-    for (int i = 0; i < 2; i++) {
-        const auto& v = *g_ask->mods[i];
-        std::wstring t; int on = 0;
-        bool allOff = true;                                        // everything off = the list is ignored (as at the start)
-        for (const auto& e : v) if (!ModIsOff(e)) allOff = false;
-        for (const auto& e : v) if (allOff || !ModIsOff(e)) { if (!t.empty()) t += L", "; t += e; ++on; }
-        if (on != (int)v.size()) t = std::to_wstring(on) + L" / " + std::to_wstring(v.size()) + L":  " + t;
-        g_ask->sub[i] = t;
-    }
-}
-
-static int AskHit(POINT p)
-{
-    for (int i = 0; i < 2; i++) if (AskHasPick(i) && PtInRect(&g_ask->pick[i], p)) return 3 + i;
-    for (int i = 0; i < 3; i++) if (PtInRect(&g_ask->btn[i], p)) return i;
-    return -1;
-}
-
-static void AskLayout(HDC dc)
-{
-    AskFolder& a = *g_ask;
-    a.w = S(540);
-    int pad = S(26), y = pad;
-    y += DialogTextHeight(dc, g_fButton, a.title, a.w - 2 * pad) + S(12);
-    y += DialogTextHeight(dc, g_fSub, a.text, a.w - 2 * pad) + S(20);
-    for (int i = 0; i < 3; i++) {
-        int bh = i == 2 ? S(38) : S(62);
-        int inset = i == 2 ? S(150) : 0;
-        a.btn[i] = RECT{ pad + inset, y, a.w - pad - inset, y + bh };
-        if (i < 2) {
-            int ps = S(40), py = y + (bh - ps) / 2;
-            bool rtl = g_langMeta[g_lang].rtl;
-            a.pick[i] = rtl ? RECT{ a.btn[i].left + S(12), py, a.btn[i].left + S(12) + ps, py + ps }
-                            : RECT{ a.btn[i].right - S(12) - ps, py, a.btn[i].right - S(12), py + ps };
-        }
-        y += bh + (i == 1 ? S(18) : S(12));
-    }
-    a.h = y - S(12) + pad;
-}
-
-static void AskPaint(HWND hwnd, HDC dc)
-{
-    AskFolder& a = *g_ask;
-    RECT c; GetClientRect(hwnd, &c);
-    HBITMAP bmp; HGDIOBJ ob;
-    HDC mem = DialogBegin(dc, c, bmp, ob);
-    bool rtl = g_langMeta[g_lang].rtl;
-    UINT align = (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_WORDBREAK | DT_NOPREFIX;
-    int pad = S(26), y = pad;
-    HGDIOBJ of = SelectObject(mem, g_fButton);
-    SetTextColor(mem, C_TITLE);
-    RECT tr{ pad, y, c.right - pad, c.bottom };
-    y += DrawTextW(mem, a.title.c_str(), -1, &tr, align) + S(12);
     SelectObject(mem, g_fSub);
-    SetTextColor(mem, C_TEXT_DIM);
-    RECT br{ pad, y, c.right - pad, c.bottom };
-    DrawTextW(mem, a.text.c_str(), -1, &br, align);
-    TEXTMETRICW tm{};
-    SelectObject(mem, g_fButton);
-    GetTextMetricsW(mem, &tm);
+    SetTextColor(mem, RGB(255, 214, 120));                         // the notes, in amber
+    y = a.notesY;
+    for (const std::wstring* note : { a.showChanged ? &a.changed : nullptr, a.Twice() ? &a.twice : nullptr }) {
+        if (!note) continue;
+        RECT nr{ pad, y, c.right - pad, c.bottom };
+        y += DrawTextW(mem, note->c_str(), -1, &nr, wrap) + S(8);
+    }
+    {   // the preset box and its label
+        const RECT& r = a.saveRow;
+        bool hov = a.hover == n;
+        int cy = (r.top + r.bottom) / 2;
+        RECT box{ rtl ? r.right - bs : r.left, cy - bs / 2, 0, cy - bs / 2 + bs };
+        box.right = box.left + bs;
+        DialogTickBox(mem, box, a.saveOn, hov);
+        RECT lr{ rtl ? r.left : box.right + S(12), 0, rtl ? box.left - S(12) : r.right, 0 };
+        int lh = DialogTextHeight(mem, g_fSub, a.save, lr.right - lr.left);
+        lr.top = cy - lh / 2; lr.bottom = lr.top + lh;
+        SetTextColor(mem, hov || a.saveOn ? C_TEXT : C_TEXT_DIM);
+        DrawTextW(mem, a.save.c_str(), -1, &lr, wrap);
+    }
     SelectObject(mem, of);
 
-    for (int i = 0; i < 3; i++) {
-        const RECT& r = a.btn[i];
-        bool hov = a.hover == i, dn = hov && a.pressed == i;
-        DialogButton(mem, r, hov, dn, true, i == 2 ? 150 : 215);
-        if (i == 2) { DialogButtonLabel(mem, r, a.label[i], dn, true); continue; }
-        // label, and under it the mods of that folder; the room of the pick button stays free
-        int d = dn ? S(1) : 0, room = AskHasPick(i) ? S(12) + (a.pick[i].right - a.pick[i].left) + S(10) : S(20);
-        int left = r.left + (rtl ? room : S(20)), right = r.right - (rtl ? S(20) : room);
-        int tx = rtl ? right - TextWidth(mem, g_fButton, a.label[i], S(1)) : left;
-        TextAt(mem, g_fButton, C_TEXT, tx + d, r.top + S(9) + d, a.label[i], S(1));
-        HGDIOBJ f1 = SelectObject(mem, g_fSmall);
-        SetTextColor(mem, hov ? C_TEXT : C_TEXT_DIM);
-        RECT sr{ left + d, r.top + S(9) + tm.tmHeight + S(3) + d, right, r.bottom - S(4) };
-        DrawTextW(mem, a.sub[i].c_str(), -1, &sr, (rtl ? (DT_RIGHT | DT_RTLREADING) : DT_LEFT) | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        SelectObject(mem, f1);
-        if (!AskHasPick(i)) continue;
-        // the pick button: a small list with tick boxes
-        const RECT& q = a.pick[i];
-        bool qh = a.hover == 3 + i, qd = qh && a.pressed == 3 + i;
-        FillRoundAlpha(mem, q, S(8), qd ? C_BTN_DOWN : (qh ? C_BTN_HOV : RGB(3, 22, 9)), 235);
-        StrokeRound(mem, q, S(8), qh ? C_BTN_GLOW : C_BTN_EDGE, qh ? S(2) : 1);
-        COLORREF ic = qh ? C_BTN_GLOW : C_BTN_EDGE;
-        for (int k = 0; k < 3; k++) {
-            int ly = q.top + S(11) + k * S(9) + (qd ? S(1) : 0), bx = q.left + S(9) + (qd ? S(1) : 0);
-            RECT sq{ bx, ly - S(3), bx + S(6), ly + S(3) };
-            if (k < 2) FillRectC(mem, sq.left, sq.top, sq.right, sq.bottom, ic); else StrokeRound(mem, sq, 0, ic, 1);
-            FillRectC(mem, bx + S(10), ly - S(1), q.right - S(9) + (qd ? S(1) : 0), ly + S(1), ic);
-        }
-    }
+    bool any = a.AnyOn();
+    DialogButton(mem, a.btnOk, any && a.hover == n + 1, any && a.hover == n + 1 && a.pressed == n + 1, any, 215);
+    DialogButtonLabel(mem, a.btnOk, a.ok, any && a.hover == n + 1 && a.pressed == n + 1, any);
+    DialogButton(mem, a.btnCancel, a.hover == n + 2, a.hover == n + 2 && a.pressed == n + 2, true, 150);
+    DialogButtonLabel(mem, a.btnCancel, a.cancel, a.hover == n + 2 && a.pressed == n + 2, true);
     DialogBlit(dc, c, mem, bmp, ob);
 }
 
-static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+static void ModListScroll(HWND hwnd, int rows)
 {
-    if (!g_ask) return DefWindowProcW(hwnd, msg, wp, lp);
-    AskFolder& a = *g_ask;
+    ModList& a = *g_modList;
+    int top = (std::max)(0, (std::min)(a.top + rows, a.Count() - a.shown));
+    if (top == a.top) return;
+    a.top = top;
+    POINT p; GetCursorPos(&p); ScreenToClient(hwnd, &p);           // another row is under the pointer now
+    a.hover = ModListHit(p);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+static LRESULT CALLBACK ModListProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (!g_modList) return DefWindowProcW(hwnd, msg, wp, lp);
+    ModList& a = *g_modList;
+    int n = a.Count();
     POINT p{ (short)LOWORD(lp), (short)HIWORD(lp) };
     switch (msg) {
     case WM_ERASEBKGND: return 1;
-    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); AskPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
-    case WM_NCHITTEST:                                             // drag the box by anything that is not a button
+    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps); ModListPaint(hwnd, dc); EndPaint(hwnd, &ps); return 0; }
+    case WM_NCHITTEST:                                             // drag the box by anything that is not a row, a box or a button
         ScreenToClient(hwnd, &p);
-        return AskHit(p) == -1 ? HTCAPTION : HTCLIENT;
+        return PtInRect(&a.btnOk, p) || ModListHit(p) != -1 ? HTCLIENT : HTCAPTION;
     case WM_NCMOUSEMOVE:
     case WM_MOUSELEAVE:
         if (a.hover != -1) { a.hover = -1; InvalidateRect(hwnd, nullptr, FALSE); }
         break;
     case WM_MOUSEMOVE: {
-        int h = AskHit(p);
+        int h = ModListHit(p);
         if (h != a.hover) {
             a.hover = h;
             if (h != -1) PlaySoundSpec(g_cfg.soundHover, RES_SOUND_HOVER);
@@ -3770,26 +3675,46 @@ static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
+    case WM_MOUSEWHEEL:
+        a.wheel += GET_WHEEL_DELTA_WPARAM(wp);
+        for (; a.wheel >= WHEEL_DELTA; a.wheel -= WHEEL_DELTA) ModListScroll(hwnd, -1);
+        for (; a.wheel <= -WHEEL_DELTA; a.wheel += WHEEL_DELTA) ModListScroll(hwnd, 1);
+        return 0;
     case WM_LBUTTONDOWN:
-        a.pressed = AskHit(p);
+        a.pressed = ModListHit(p);
         if (a.pressed != -1) { SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_LBUTTONUP: {
         int was = a.pressed;
         a.pressed = -1;
         if (GetCapture() == hwnd) ReleaseCapture();
+        if (was != -1 && ModListHit(p) == was) {
+            PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
+            if (was < n) {                                         // a tick: the notes under the rows may come or go, and the box grows with them
+                a.on[was] = !a.on[was];
+                int h = a.h;
+                HDC dc = GetDC(hwnd);
+                ModListLayout(dc);
+                ReleaseDC(hwnd, dc);
+                if (a.h != h) SetWindowPos(hwnd, nullptr, 0, 0, a.w, a.h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            else if (was == n) a.saveOn = !a.saveOn;
+            else a.result = was == n + 1 ? 1 : 0;
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
-        if (was == -1 || AskHit(p) != was) return 0;
-        PlaySoundSpec(g_cfg.soundClick, RES_SOUND_CLICK);
-        if (was >= 3) {                                            // choose the mods of that folder, then back to this question
-            a.hover = -1;
-            if (PickModsOf(hwnd, a.label[was - 3], *a.mods[was - 3])) AskRefreshSubs();
-            InvalidateRect(hwnd, nullptr, FALSE);
-        } else a.result = was == 2 ? 0 : was + 1;
         return 0;
     }
     case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) a.result = 0;
+        switch (wp) {
+        case VK_ESCAPE: a.result = 0; break;
+        case VK_RETURN: if (a.AnyOn()) a.result = 1; break;
+        case VK_UP:     ModListScroll(hwnd, -1); break;
+        case VK_DOWN:   ModListScroll(hwnd, 1); break;
+        case VK_PRIOR:  ModListScroll(hwnd, -a.shown); break;
+        case VK_NEXT:   ModListScroll(hwnd, a.shown); break;
+        case VK_HOME:   ModListScroll(hwnd, -n); break;
+        case VK_END:    ModListScroll(hwnd, n); break;
+        }
         return 0;
     case WM_CLOSE:
         a.result = 0;
@@ -3798,27 +3723,72 @@ static LRESULT CALLBACK AskProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// 1 = the game's mods folder, 2 = the Steam Workshop folder, 0 = cancelled.
-// -1 = the dialog could not be shown (the caller falls back to the message box at launch).
-static int AskModFolder(HWND owner, const std::vector<std::wstring>& local, const std::vector<std::wstring>& workshop)
+// The mod list. atStart = on the way to a start (PLAY / EDITOR): it opens only when there is something to ask - more
+// than one marked mod, and no saved preset or a preset that does not know every mod found now. Opened with its own
+// button it always shows. OK keeps the ticks (and the preset box) in mod_list.txt, where the start reads them.
+// Returns false when the player cancelled (atStart: do not start).
+static bool ChooseMods(HWND owner, bool atStart)
 {
-    AskFolder a;
-    a.title = T(L"mods_ask_title");
-    a.text  = ReplaceAll(T(L"mods_ask_text"), L"\\n", L"\n");
-    a.label[0] = T(L"mods_ask_local");    a.mods[0] = &local;
-    a.label[1] = T(L"mods_ask_workshop"); a.mods[1] = &workshop;
-    a.label[2] = T(L"mods_ask_cancel");
-    g_ask = &a;
-    LoadModsOff();
-    AskRefreshSubs();
+    if (g_modList) return false;
+    std::vector<std::wstring> loc, shop;
+    const std::vector<std::wstring> all = FindMarkedMods(g_cfg.exe, g_cfg.appid, g_cfg.modsMarker, &loc, &shop, false);   // the start scans again and logs
+    if ((int)all.size() != g_markedMods) { g_markedMods = (int)all.size(); InvalidateRect(g_wnd, nullptr, FALSE); }   // the mod list button shows with two or more
+    ModChoice choice = LoadModChoice();
+    bool complete = false;
+    const std::vector<char> on = ResolveModChoice(g_cfg, choice, all, loc, shop, &complete);
+    if (atStart && (all.size() < 2 || (!choice.ask && complete))) return true;
+    if (all.empty()) { SetStatus(L"st_mod_list_none", true); return false; }
+
+    ModList a;
+    a.title   = T(L"mods_pick_title");
+    a.text    = ReplaceAll(T(L"mods_pick_text"), L"\\n", L"\n");
+    a.changed = ReplaceAll(T(L"mods_pick_changed"), L"\\n", L"\n");
+    a.twice   = ReplaceAll(T(L"mods_pick_twice"), L"\\n", L"\n");
+    a.save    = T(L"mods_pick_save");
+    a.ok      = T(L"mods_pick_ok");
+    a.cancel  = T(L"mods_pick_cancel");
+    const std::wstring folder[2] = { T(L"mods_pick_local"), T(L"mods_pick_workshop") };
+    for (const auto& e : all) {
+        bool local = std::find(loc.begin(), loc.end(), e) != loc.end();
+        const std::wstring& where = folder[local ? 0 : 1];
+        std::wstring title = ModTitle(e);
+        a.ids.push_back(e);
+        a.local.push_back(local ? 1 : 0);
+        a.names.push_back(title.empty() ? e : title);
+        a.subs.push_back(title.empty() ? where : e + L"   -   " + where);
+    }
+    a.on = on;
+    a.saveOn = !choice.ask;
+    a.showChanged = !choice.ask && !complete;                      // saved, and asked all the same: say why
+    a.shown = (std::min)(a.Count(), (int)MODLIST_MAX_ROWS);
+    g_modList = &a;
     HDC sdc = GetDC(owner);
-    AskLayout(sdc);
+    ModListLayout(sdc);
+    MONITORINFO mi{ sizeof(mi) };                                  // fewer rows in view on a screen the box does not fit
+    if (GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &mi))
+        while (a.shown > 2 && a.h > mi.rcWork.bottom - mi.rcWork.top - S(16)) { --a.shown; ModListLayout(sdc); }
     ReleaseDC(owner, sdc);
-    HWND hwnd = CreateDialogWindow(L"IndomitusAskFolder", AskProc, owner, a.w, a.h);
-    if (!hwnd) { g_ask = nullptr; Log(L"mods folder dialog: could not create the window (%ls)", LastErrorText().c_str()); return -1; }
+    HWND hwnd = CreateDialogWindow(L"IndomitusModList", ModListProc, owner, a.w, a.h);
+    if (!hwnd) {
+        g_modList = nullptr;
+        Log(L"mod list: could not create the window (%ls)", LastErrorText().c_str());
+        if (!atStart) SetStatus(L"st_failed", true);
+        return atStart;                                            // a start goes on with the list as it is
+    }
     RunModal(hwnd, owner, a.result);
-    g_ask = nullptr;
-    return a.result;
+    g_modList = nullptr;
+    if (a.result != 1) return false;
+
+    choice.ask = !a.saveOn;
+    std::wstring off;
+    for (int i = 0; i < a.Count(); i++) {
+        choice.Set(a.ids[i], a.on[i] != 0);
+        if (!a.on[i]) off += (off.empty() ? L"" : L", ") + a.ids[i];
+    }
+    bool kept = SaveModChoice(choice);                             // logs why when it could not
+    Log(L"mod list: %ls; switched off: %ls", choice.ask ? L"shown at every start" : L"saved as the preset", off.empty() ? L"(none)" : off.c_str());
+    if (!kept && !atStart) { SetStatus(L"st_failed", true); return false; }
+    return true;
 }
 
 static void DoAction(int i)
@@ -3826,24 +3796,16 @@ static void DoAction(int i)
     switch (i) {
     case ACT_GAME:
     case ACT_EDITOR: {
-        if (g_busy || g_ask) return;                              // g_ask: the mods folder question is open already
+        if (g_busy || g_modList) return;                          // g_modList: the mod list is open already
         const std::wstring& exe = (i == ACT_EDITOR) ? g_cfg.editorExe : g_cfg.exe;
         if (FindProcessByName(PathFindFileNameW(exe.c_str()))) {
             SetStatus(i == ACT_EDITOR ? L"st_editor_running" : L"st_game_running", true);
             Log(L"not starting %ls: already running", PathFindFileNameW(exe.c_str()));
             return;
         }
-        {   // Indomitus in <game>\mods and in the workshop folder: ask which folder to load, before anything starts
-            std::vector<std::wstring> loc, shop;
-            FindMarkedMods(g_cfg.exe, g_cfg.appid, g_cfg.modsMarker, &loc, &shop, false);   // the launch scans again and logs
-            g_modFolderPick = 0;
-            if (!loc.empty() && !shop.empty()) {
-                int pick = AskModFolder(g_wnd, loc, shop);
-                if (pick == 0) { Log(L"mods folder question cancelled - nothing started"); return; }   // the status line was not touched yet
-                if (pick > 0) g_modFolderPick = pick;             // -1 = no dialog: the message box asks at launch
-                if (g_busy) return;                               // something else started while the box was open
-            }
-        }
+        // more than one Indomitus mod on this PC and no saved preset: the player picks the mods first, before anything starts
+        if (!ChooseMods(g_wnd, true)) { Log(L"mod list cancelled - nothing started"); return; }   // the status line was not touched yet
+        if (g_busy) return;                                       // something else started while the list was open
         g_busy = true;
         SetStatus(i == ACT_EDITOR ? L"st_starting_editor" : L"st_starting_game");
         {
@@ -3854,6 +3816,9 @@ static void DoAction(int i)
         }
         break;
     }
+    case ACT_MOD_LIST:
+        if (ChooseMods(g_wnd, false) && !g_busy) SetStatus(L"st_mod_list_saved");
+        break;
     case ACT_OPEN_MODS: {
         // <game>\mods  (exe lives in binaries\x64)
         std::wstring dir = DirOf(DirOf(DirOf(g_cfg.exe))) + L"\\mods";
@@ -4110,6 +4075,7 @@ static int Run()
     wc.hIconSm       = wc.hIcon;
     wc.lpszClassName = kWindowClass;
     RegisterClassExW(&wc);
+    g_markedMods = (int)g_cfg.requireMods.size();
 
     HDC sdc = GetDC(nullptr);
     g_dpi = GetDeviceCaps(sdc, LOGPIXELSX);

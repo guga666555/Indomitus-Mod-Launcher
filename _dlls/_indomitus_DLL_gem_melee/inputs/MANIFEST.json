@@ -1,0 +1,98 @@
+{
+ "trees": {
+  "meleestance_0.7.42": {
+   "source": "C:/Users/alex_/Documents/IndomitusLauncher_mc054/_dlls/_indomitus_DLL_meleestance",
+   "what": "GEM MeleeStance 0.7.42 (mc054 worktree, built Nov 20 2026 12:40, not in any payload yet); dist dll / ini / build_log refreshed Nov 20 18:45 to the 12:58-12:59 rebuild of the same source",
+   "files": {
+    "build.bat": "5c639a0879cb835d0565b400caef8602c0deeaf90981e1ea217c6b33d408bfcf",
+    "build_log.txt": "c8c44e3c6e45d6876076d0924b92c202ce50bc9c497f110efe1c8dae398c559d",
+    "README.md": "a0f34ad146a46faf4a95f823238ecadbe8456a23a8934f41ed7cbb971d0281a7",
+    "dist/gem_meleestance.dll": "32bee3c1cc5ba67760f522c6fa44509c9063d063a9c92774ea298961cefc62d6",
+    "dist/gem_meleestance.ini": "eda2575c43dcc4592ddfdc29840ad62ed2436f51e01ddf026880be138b553c98",
+    "dist/ms_test.exe": "2938cd2068cd226559eddda8737633db0334393bb3d88d49bd6a59c14a173764",
+    "src/gem_meleestance.c": "96b0c33e8d5ed8e4b4a5dbc1a866031740633de85ffc0621eb68fac7bec0b474",
+    "src/gem_meleestance.ini": "eda2575c43dcc4592ddfdc29840ad62ed2436f51e01ddf026880be138b553c98"
+   }
+  },
+  "meleechase_0.5.4": {
+   "source": "C:/Users/alex_/Documents/IndomitusLauncher_mc054/_dlls/_indomitus_DLL_meleechase",
+   "what": "GEM MeleeChase 0.5.4 (mc054 worktree; dist dll = live payload a1d6ed3c)",
+   "files": {
+    "build.bat": "282458e087538d87c4cd4d89da4054ca7d009f7afeb33bff108aa15da5cc831b",
+    "gem_meleechase.ini": "6cc50015a8018b054a4de3d634968d889406c8b2e16abec7b855451a5e9c663c",
+    "README.md": "f7b2a6c605730bf5404df6dac4d5d42f1d8ffbf1b5863921b4ae870c1820d3e0",
+    "dist/gem_meleechase.dll": "e992118a57b27d3a007c52559c6d4f564c7c17c584146b37d455f56e4cbba38b",
+    "dist/gem_meleechase.ini": "6cc50015a8018b054a4de3d634968d889406c8b2e16abec7b855451a5e9c663c",
+    "src/gem_meleechase.c": "e7703a1fef7a79f89847689bec9e23c91ba161814aa86354535ff9e5b89745f5",
+    "src/mc/core.c": "9e1b3dad024becb55c83fa86597d09a9efb6bf5128839b9fa792899f50a480a1",
+    "src/mc/crashlog.c": "093c6fb56042aeda1289db6e2db02e1a07c2dc74de185122d080a4284d49eca1",
+    "src/mc/main.c": "099a0adf779e8d35f4ee0d23166c3351c896e11aa4a69b875ef684d4b69b0b28",
+    "src/mc/melee.c": "ff6a247e1d3036abf25c2563371f83fd0369ddc3cc70d48bdd88415e4bbd086a",
+    "src/mc/patch.c": "ed4fcc0efbef22040c37ccb729acbe6110447569d7ea912a5351033c9c188e67",
+    "src/mc/test_main.c": "7d7aa0ab63b112d50ff85f722dcb3f6715bbaee2478a306d780504bec899ef0e",
+    "tests/check_entity_tags.py": "896480224d8c1bf7eb7fdc815f16a7c11e875669edfb857ed2328fb668dfc08d",
+    "tests/run_offline_check.sh": "f742cbae7c453f99eaad9636dbe84f78b31441beafaf3ae2346d949b51cdfc0b",
+    "tests/stub/stdint.h": "8d938d2d180060670fbe45a8483eeddbcc07c11c67ce809e94c415e90aea61da",
+    "tests/stub/tlhelp32.h": "2debbe5b8320467b993c172726dad24c7a1ddf032fcfd0d7d037f24721332a0f",
+    "tests/stub/windows.h": "427aa7361ac04eb77954de083515e37e0956a3f6e84d704ffbe1e55010e40e07"
+   }
+  },
+  "penfilter_0.1.1": {
+   "source": "C:/Users/alex_/OneDrive/Desktop/Claude_Indomitus_Project/_tools/gem_penfilter",
+   "what": "GEM PenFilter 0.1.1 (out dll = live payload a1d6ed3c)",
+   "files": {
+    "build.bat": "edc94f09ff2f38e5e194a92221eaff942d0ef9288abdfa488b85b856aea6dfe9",
+    "gem_penfilter.c": "460dd4168fd62fadbd0bf0fa57b44ed99ddb6afc61dd4b562452fe3c61af484a",
+    "gem_penfilter.ini": "86558037d4319e4e4dc2e02007cda8c6874b890ba6201139bf4bc4e3b02b7858",
+    "inject.bat": "ea28547ef763fb7fe950ec8c66901e1932973f211347f60698017c10099f8aa4",
+    "README.md": "541be0c839ea4404bc0fb836c249545b3f676eabe75e64d3a0e3ec5e8d61bb05",
+    "out/gem_inject.exe": "0c6678b4e46ca3f760dbdbf91e2f75b8fe9afdcd2cfe394217654ab6a5beebdb",
+    "out/gem_penfilter.dll": "44b6d47ff62d0d0357cc5cc90d643651e13b5927be46d1ad59f40d10bc0e7faa",
+    "out/gem_penfilter.ini": "86558037d4319e4e4dc2e02007cda8c6874b890ba6201139bf4bc4e3b02b7858",
+    "out/inject.bat": "ea28547ef763fb7fe950ec8c66901e1932973f211347f60698017c10099f8aa4",
+    "out/pf_test.exe": "527626818a7790dc4f93f0c37497b917e0f237a1cbcff82a54f3272eb3f9ec13",
+    "out/selftest.txt": "c457a757630c4b1ac2e41124a3f29209b3700310c4e9de41c5d740c8234b1e2e"
+   }
+  },
+  "teleport_0.2.13": {
+   "source": "C:/Users/alex_/Documents/IndomitusLauncher_mc054/_dlls/_indomitus_DLL_teleport",
+   "what": "GEM Teleport 0.2.13 (looks up gem_meleestance.dll!gem_quant_listen; exports gem_order_listen)",
+   "files": {
+    "build.bat": "cc72c6fa4d002f0042a1bd66c075a07ce7308d5870fa8149609ac1f75c92b9ce",
+    "gem_teleport.ini": "9aa4334b7a9f262ba9bbf8d002f405381d6c448506eb1e58565ad6d684d27774",
+    "README.md": "5c36a4aeed917958f1b9580de61517b7c8e0cf535d1def6782ae6450677b78e9",
+    "mod_side/jetpack.set": "aba9818b707a13090dc064e8711276149716fa2e238f37da15f9b760554909a6",
+    "mod_side/teleport_events.inc": "ef388b489249b9cccf12acc85d54c0f553fd17c7667ca9ac4fe552e521c5ea68",
+    "src/gem_teleport.c": "b16cbe693403aedb3f9476f7617dd7caac101a59438f2406779f4edf95813cc7",
+    "src/tp/core.c": "f1f377f943ceff769f37ca6701760f02e86320c24c6d13cf7cfd15e0645a176a",
+    "src/tp/crashlog.c": "661f97c3f7a8aad0c265edc454ca653e967c10cdbd0822ee9451c44dd517acc7",
+    "src/tp/engine.c": "c1026f94415030125a942007a67e4853d64e15e42d5be8f4d60a24220994886a",
+    "src/tp/main.c": "88ef76031ca1578eb5d07666332bdd7010f416434b7bfb3f214297fdba4ff60d",
+    "src/tp/patch.c": "80717e0f1b32a44bb39528c78058955710e45677a876ce190deaa09a683c83e5",
+    "src/tp/teleport.c": "94db91a5909a355c04f4ccbff8f8622c2e6797e690efb5a6eee86f7f39c889eb",
+    "src/tp/test_main.c": "a343d960f9af65a936fe4b65be26db8e97a52ea04bba0b8a5e69c519580b6c92",
+    "src/tp/watch.c": "96f351803be062b9b5ee2a525f72ad964504e6fb6cb0478371bfd0639e772fbf",
+    "tests/run_offline_check.sh": "f15129af29a728ac77a197a95dcd2781e44940d8026412d91f3426aa07bb6f44",
+    "tests/stub/stdint.h": "8d938d2d180060670fbe45a8483eeddbcc07c11c67ce809e94c415e90aea61da",
+    "tests/stub/tlhelp32.h": "2debbe5b8320467b993c172726dad24c7a1ddf032fcfd0d7d037f24721332a0f",
+    "tests/stub/windows.h": "e8ccd6c6f58d32f0f24fc762679b689b8fa5c635db60aa1d523c721e23c89143"
+   }
+  }
+ },
+ "files": {
+  "live_payload_a1d6ed3c": {
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleestance.dll": "9ee308d958870faf2bbe4e6f780de06e0f2c2ef610d3419d01f778c56a06811b",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleestance.ini": "3fd152dc146123a988777c4edc2a85c069563abef8150595ef3ed5f2ccdcfc32",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleestance_editor.log": "9c536c63a52856824deecb399fda24c99f9086c4791592e0e4e60b8f6abef85a",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleechase.dll": "e992118a57b27d3a007c52559c6d4f564c7c17c584146b37d455f56e4cbba38b",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleechase.ini": "6cc50015a8018b054a4de3d634968d889406c8b2e16abec7b855451a5e9c663c",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_meleechase.log": "3a9ee2c29b148575bb75aa47f4bad14c99a3253f143da2841323ef89bb804991",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_penfilter.dll": "44b6d47ff62d0d0357cc5cc90d643651e13b5927be46d1ad59f40d10bc0e7faa",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_penfilter.ini": "86558037d4319e4e4dc2e02007cda8c6874b890ba6201139bf4bc4e3b02b7858",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_penfilter_editor.log": "59beae43e8ee97d461385bc892903930b6d83126c787f286736812d362648461",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_teleport.dll": "98d4f8feb41403f21b93bfe34c4eb471b6b15a2c433dde656f1bdbd488b3052d",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_teleport.ini": "9aa4334b7a9f262ba9bbf8d002f405381d6c448506eb1e58565ad6d684d27774",
+   "C:/Users/alex_/AppData/Local/Indomitus Launcher/payload/a1d6ed3c/gem_teleport.log": "e9e63f2505c700ca12e153f4f19501d692274b35a3e7a6584bda3d17f744520f"
+  }
+ }
+}

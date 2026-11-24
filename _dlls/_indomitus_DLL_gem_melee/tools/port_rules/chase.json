@@ -1,0 +1,418 @@
+{
+ "files": [
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/gem_meleechase.c",
+   "port": "src/chase/chase.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "C1",
+     "from": 42,
+     "to": 41,
+     "add_max": 3,
+     "why": "#ifndef FX_TEST / include ../core/core.h / #endif after mcu:41 (3 lines) [tightened by WP2]",
+     "sha256": "4645aad3680961e6217364644ab402ef1a7e2380f68c61924f07cdee29dc0569"
+    },
+    {
+     "id": "C2",
+     "from": 51,
+     "to": 51,
+     "add_max": 0,
+     "why": "delete #include \"mc/crashlog.c\" (the core owns the crash log) [tightened by WP2]",
+     "sha256": "e7c40ee4906b5debe4495d7683b0af0d9ef3eb46998b3cfb16bb947f14ade1c3"
+    },
+    {
+     "id": "C22",
+     "from": 54,
+     "to": 53,
+     "add_max": 8,
+     "why": "REVIEW F1 (fixer, Nov 20 2026): test-only chase_test_hook_fns() after the last include (mcu:53): the itest compares every chase pad / vtable value with the hook function it must lead to; never called in the dll",
+     "sha256": "3930754c8a0a107fe8e481b858083b238e3fe6b88f436205e1bc2c2b8f5b05a3"
+    }
+   ]
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/core.c",
+   "port": "src/chase/mc/core.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "C3",
+     "from": 14,
+     "to": 16,
+     "add_max": 1,
+     "why": "g_log / g_console / g_dir -> static int g_logfile = 1; (1 line) [tightened by WP2]",
+     "sha256": "65ec78ac7def91a777c710b89c31e88a2261b81c7608ed045bca479a1a851088"
+    },
+    {
+     "id": "C4",
+     "from": 20,
+     "to": 27,
+     "add_max": 2,
+     "why": "logf_ body -> if (!g_logfile) return; + core_vlog (signature :18, braces :19 / :28 stay; 2 lines) [tightened by WP2]",
+     "sha256": "82b29fb82424044cf183d46931089efc9a6cbf8514e8c314d590a32947ff8f2b"
+    },
+    {
+     "id": "C5a",
+     "from": 32,
+     "to": 32,
+     "add_max": 1,
+     "why": "ini_str: ini path from core_ini_pathw() (1 line) [tightened by WP2]",
+     "sha256": "aa0294dc9c29a558a1c5edae0159a9368e6484601e959fd5a04f1cb706a83955"
+    },
+    {
+     "id": "C5b",
+     "from": 41,
+     "to": 41,
+     "add_max": 1,
+     "why": "ini_int: ini path from core_ini_pathw() (1 line) [tightened by WP2]",
+     "sha256": "0a7e30ce943c95d38bb6531fc463a1d2a96a918f920b1c8cec2c1b583134cb24"
+    },
+    {
+     "id": "C6",
+     "from": 58,
+     "to": 58,
+     "add_max": 1,
+     "why": "g_base = core_exe_base() (1 line) [tightened by WP2]",
+     "sha256": "36bbcbe7f091b08ec0870d8a42ad289fbd2c1866c44bf6e54fce7847e5970f51"
+    }
+   ]
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/patch.c",
+   "port": "src/chase/mc/patch.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "C7b1",
+     "from": 37,
+     "to": 37,
+     "add_max": 1,
+     "why": "__attribute__((unused)) on suspend_others (1 line) [tightened by WP2]",
+     "sha256": "fdee4f7aa3cae005cb42f4993ad15a7606806487aea1ac22e4fde852f76a5f13"
+    },
+    {
+     "id": "C7b2",
+     "from": 62,
+     "to": 62,
+     "add_max": 1,
+     "why": "__attribute__((unused)) on resume_others (1 line) [tightened by WP2]",
+     "sha256": "a62eb791489dcf1bf117c0d0468fbe290d511bd6ae217b2939bac728f456e617"
+    },
+    {
+     "id": "C7",
+     "from": 67,
+     "to": 76,
+     "add_max": 1,
+     "why": "patch_code body -> return core_patch_code(...) (signature :65, braces :66 / :77 stay; 1 line) [tightened by WP2]",
+     "sha256": "2ee07c3b0b0c1a77098f232666c56ff46cf2c2fdfb5bb47d0ccc9897c898be7c"
+    },
+    {
+     "id": "C8",
+     "from": 113,
+     "to": 113,
+     "add_max": 2,
+     "why": "patch_call_rel32: whole 5-byte instruction through the registry (range check / log :110-112 stay; 2 lines) [tightened by WP2]",
+     "sha256": "437c659afd28f2def8e8be239d82893bb5815f48eb4d01122e15a89ee8f7eb22"
+    },
+    {
+     "id": "C9a",
+     "from": 118,
+     "to": 118,
+     "add_max": 1,
+     "why": "redirect_call: parameter const void *expect (1 line) [tightened by WP2]",
+     "sha256": "9557c728f3754020e042cdb1673515a027e4f1c2acea2aa6cb1a5e3db6b1a78d"
+    },
+    {
+     "id": "C9b",
+     "from": 120,
+     "to": 119,
+     "add_max": 2,
+     "why": "redirect_call: target check as the first line (comment line + check; :120-127 unchanged) [tightened by WP2]",
+     "sha256": "6289e747ba0f411d3309e1999b256d4c234a034e47ca24218b97584b5bdfdf2d"
+    },
+    {
+     "id": "C10a",
+     "from": 130,
+     "to": 130,
+     "add_max": 1,
+     "why": "vt_hook: parameter const char *what (1 line; C10 split, brace :131 stays) [tightened by WP2]",
+     "sha256": "7e494f983f7e14202355993d1e5d0e63fbcf38199b197ae195ecfdafe0896d74"
+    },
+    {
+     "id": "C10b",
+     "from": 132,
+     "to": 136,
+     "add_max": 1,
+     "why": "vt_hook body -> return core_patch_ptr(...) (1 line; closing brace :137 stays) [tightened by WP2]",
+     "sha256": "df019745ce85081f338c24912b41cd57d276a126d20e0b06b87f86bd0ad2418d"
+    }
+   ]
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/melee.c",
+   "port": "src/chase/mc/melee.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "C12",
+     "from": 825,
+     "to": 824,
+     "add_max": 2,
+     "why": "CORE_TRACE before *cur = want; (one statement on 2 lines) [tightened by WP2]",
+     "sha256": "939ecc4a9041c6258df7cdc8f96ee3b9e0e559d55f69ebd33ec39e9764a801c5"
+    },
+    {
+     "id": "C13",
+     "from": 922,
+     "to": 921,
+     "add_max": 2,
+     "why": "CORE_NOTE_FRONT + CORE_TRACE after mc/melee:921 (2 lines) [tightened by WP2]",
+     "sha256": "0d27543b3dddeeec683eb471ca0cecb029d22a1d09f8642035fbfc235d81644c"
+    },
+    {
+     "id": "C14",
+     "from": 1037,
+     "to": 1037,
+     "add_max": 3,
+     "why": "hold: note / trace / core_ceasefire instead of return g_clearTarget(w, 1) (log :1035-1036 stay; 3 lines) [tightened by WP2]",
+     "sha256": "7ff187e7363c9e153129314b251eea0d3df8c29a29833732eb335e140e9ebef1"
+    },
+    {
+     "id": "C15a",
+     "from": 1047,
+     "to": 1047,
+     "add_max": 1,
+     "why": "redirect_call target evaluation + expect (1 line) [tightened by WP2]",
+     "sha256": "46d96f45c154d797c0d262e42000c2369aee6dacaff6ee294028e74ed27aa006"
+    },
+    {
+     "id": "C15b",
+     "from": 1049,
+     "to": 1049,
+     "add_max": 2,
+     "why": "redirect_call weapon target + expect (1 line) [tightened by WP2]",
+     "sha256": "982a7df0113d5a822a72c47d28d38890a2a2b89ecb43b7b2d04365e16a9d8317"
+    },
+    {
+     "id": "C15c",
+     "from": 1056,
+     "to": 1059,
+     "add_max": 4,
+     "why": "vt_hook names + redirect_call approach + expect (4 lines) [tightened by WP2]",
+     "sha256": "82a67e368ca462c4c8bd69cb2ef24b79cf7fad6633709ac2608a6b4a6f963a03"
+    },
+    {
+     "id": "C16",
+     "from": 1062,
+     "to": 1061,
+     "add_max": 8,
+     "why": "gem_melee API block before #endif /* FX_TEST */ (spec C16 text, 8 lines) [tightened by WP2]",
+     "sha256": "9616e35d153e8f02e42feaba6b8d3e1e0c0e98d0f8dbb1468136c7f271debf79"
+    },
+    {
+     "id": "H1",
+     "from": 708,
+     "to": 707,
+     "add_max": 21,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): tgt_dist: centre or nearest volume centre",
+     "sha256": "37ad52e4301476054c1cc36d038e2c132b6a1e8fa7d16dea9a50e8b2949645da"
+    },
+    {
+     "id": "H2",
+     "from": 820,
+     "to": 819,
+     "add_max": 1,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): apply_priority measures to the hull",
+     "sha256": "6f0ded3687bb7251df54b71fa473233d8643b1d7f47987ef91e61b18766e25aa"
+    },
+    {
+     "id": "H3",
+     "from": 878,
+     "to": 877,
+     "add_max": 23,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): vs_tick: a melee unit in reach of the hull holds",
+     "sha256": "0009fc58e8852848cbdef4efe231cfb72ee6d819e6bcc560c4c35897362ad23f"
+    },
+    {
+     "id": "H4",
+     "from": 879,
+     "to": 879,
+     "add_max": 1,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): vs_tick measures to the hull",
+     "sha256": "a0abe87218ed4b8a7a7f51a4c4417f735eb33d57649a8f05d2c0bb68f51f5d4d"
+    },
+    {
+     "id": "H5",
+     "from": 968,
+     "to": 968,
+     "add_max": 1,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): mt_update measures to the hull",
+     "sha256": "8de304ddba4edd22bf631fdab149410bdcf5acd8cd8b3d8815f43f79211ae413"
+    },
+    {
+     "id": "H6",
+     "from": 1034,
+     "to": 1034,
+     "add_max": 1,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): st_wrap (hold ranged fire) measures to the hull",
+     "sha256": "34d8f64cfddcb3ddfa5948b3ec28065ec15bb322853ae364e5ae6c567ec21c50"
+    },
+    {
+     "id": "R1",
+     "from": 1026,
+     "to": 1025,
+     "add_max": 43,
+     "why": "gem_melee 0.1.13 (patch_0113.py; Alex on 0.1.12: the flamer keeps the target, the fist is never looked at): {   /* gem_melee 0.1.13 (log only): what the target evaluation hands each weapon of a unit in melee reach of i",
+     "sha256": "7b04e800099ecbf12c8b83e78d4926b0deab9af8ab6b3015a699266771c860d9"
+    },
+    {
+     "id": "R2",
+     "from": 1032,
+     "to": 1032,
+     "add_max": 5,
+     "why": "gem_melee 0.1.13 (patch_0113.py; Alex on 0.1.12: the flamer keeps the target, the fist is never looked at): /* not ranged priority (tag, else prop). gem_melee 0.1.13 (Alex: the dreadnoughts \"still stand in front not me",
+     "sha256": "404329a437694bf3fbb3fdfe8e8830da604218cd36f08fd10de5cb74f8d0b984"
+    },
+    {
+     "id": "T1",
+     "from": 1045,
+     "to": 1044,
+     "add_max": 311,
+     "why": "gem_melee 0.1.14 (patch_0114.py; Alex on 0.1.13: the engine's centre-based selection / range tests keep the fist out): /* ---- gem_melee 0.1.14: a melee weapon in reach of a wide target's hull is selected and counts as in range -",
+     "sha256": "992f38eafbe03bc40b81d912183109ba42c9db015ee8fe241f01f91f3ff5792f"
+    },
+    {
+     "id": "Z1",
+     "from": 790,
+     "to": 789,
+     "add_max": 16,
+     "why": "gem_melee 0.1.19 (patch_0119.py; Alex: cover the game exe + vehicle melee toggle: selection finder for all exes, melee_hold tag): /* gem_melee 0.1.19 (Alex: a melee toggle for vehicles; \"i cant imagine someone would want their bolter dread ",
+     "sha256": "a1f506e7cf25bf0977cb00542c59a946d6559d5d758fd914c024c2329cfdae9b"
+    },
+    {
+     "id": "Z2",
+     "from": 792,
+     "to": 791,
+     "add_max": 1,
+     "why": "gem_melee 0.1.19 (patch_0119.py; Alex: cover the game exe + vehicle melee toggle: selection finder for all exes, melee_hold tag): if (ent_melee_hold(e)) return 1;                                   /* gem_melee 0.1.19 */",
+     "sha256": "0fb1ee56d7a7befe45b5d3454e63b85d5c2469a7ed9da1b94ac98e8e0edd35ce"
+    },
+    {
+     "id": "Z3",
+     "from": 866,
+     "to": 865,
+     "add_max": 1,
+     "why": "gem_melee 0.1.19 (patch_0119.py; Alex: cover the game exe + vehicle melee toggle: selection finder for all exes, melee_hold tag): int hold = ent_melee_hold(e);                                   /* gem_melee 0.1.19 */",
+     "sha256": "9215de6500d66c3eca4befba91755944c6c382029c6e788ea6a8d6ea09439c59"
+    }
+   ]
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/main.c",
+   "port": "src/chase/mc/main.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "C17a",
+     "from": 16,
+     "to": 16,
+     "add_max": 1,
+     "why": "init(HMODULE) -> int chase_attach(void) (1 line) [tightened by WP2]",
+     "sha256": "be941dd70ee3292dd26b8816dc6499ecd898ced6c2cdd7000f697607469b7972"
+    },
+    {
+     "id": "C17b",
+     "from": 18,
+     "to": 28,
+     "add_max": 4,
+     "why": "chase_attach: :18-20 deleted, :21-23 core_exe_namew, :24 return 0, :25 log / verbose, :26-27 deleted, :28 return 0 (banner :29 stays; 4 lines) [tightened by WP2]",
+     "sha256": "deb20f2e0adc8b1aa3ef8fb79b53bf3c341fc6297356bd35faab5e214b4f0b8d"
+    },
+    {
+     "id": "C17c",
+     "from": 30,
+     "to": 33,
+     "add_max": 0,
+     "why": "chase_attach: crash log lines :30-33 deleted (the core's) [tightened by WP2]",
+     "sha256": "1ae6dd0a4e89484c904e7cc0d49ba92d26b6ffe19753172cb62bcc9b538f8082"
+    },
+    {
+     "id": "C18a",
+     "from": 38,
+     "to": 38,
+     "add_max": 1,
+     "why": "return; -> return 0; (1 line) [tightened by WP2]",
+     "sha256": "5179613c50dfb11e421631051511b85fc4dab42dc4648e3dd74b8c90e3ee264b"
+    },
+    {
+     "id": "C18b",
+     "from": 70,
+     "to": 70,
+     "add_max": 1,
+     "why": "return; -> return 0; (1 line) [tightened by WP2]",
+     "sha256": "87d51f6ce67eb2469dfe4ff74f566a2715c13545a62eedb4b67222322b1edc3e"
+    },
+    {
+     "id": "C19",
+     "from": 120,
+     "to": 119,
+     "add_max": 1,
+     "why": "return g_okVehicle; before the closing brace mc/main:120 (the simulation-change log :119 stays; 1 line) [tightened by WP2]",
+     "sha256": "e5fbe9bf149b0eba6ff2ba256315fdb41f6442d1765a8ffe2495575359856000"
+    },
+    {
+     "id": "C20",
+     "from": 122,
+     "to": 131,
+     "add_max": 0,
+     "why": "delete DllMain (the core's) [tightened by WP2]",
+     "sha256": "d55ce933ac88cb040248084c933071d7454a2b3cb243df087647068c3947b0aa"
+    }
+   ]
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/test_main.c",
+   "port": "src/chase/mc/test_main.c",
+   "eol": "crlf",
+   "rules": []
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/crashlog.c",
+   "port": "src/chase/mc/crashlog.c",
+   "eol": "crlf",
+   "rules": []
+  },
+  {
+   "snapshot": "inputs/meleechase_0.5.4/src/mc/crashlog.c",
+   "port": "src/core/core_crash.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "X1",
+     "from": 1,
+     "to": 0,
+     "add_max": 6,
+     "why": "core_int.h, <stdio.h>, logf_ / g_self / in_text macros (spec 4.4: X1 8; entry owned by WP0) (REVIEW F3: tightened 8 -> 6, the lines the port adds)",
+     "sha256": "fb2366e04b42e20768f7b51575f196a4b78efb2e92f56073be4cb76a18eb5ba3"
+    },
+    {
+     "id": "X2",
+     "from": 11,
+     "to": 11,
+     "add_max": 1,
+     "why": "static volatile LONG g_vehCount; (spec 4.4: X2 2) (REVIEW F3: tightened 2 -> 1, the lines the port adds)",
+     "sha256": "4929ade19bb510d4c1a6862339abd00e6e442e358a54867fe029a6576c6730ef"
+    },
+    {
+     "id": "X3",
+     "from": 115,
+     "to": 114,
+     "add_max": 2,
+     "why": "core_crash_install() before #endif (spec 4.4: X3 6) (REVIEW F3: tightened 6 -> 2, the lines the port adds)",
+     "sha256": "0d6125ca5bd4bcc37c3c2bd3c8a2ed3f13e5956d05d52bfee9721b6636a49ec9"
+    }
+   ]
+  }
+ ]
+}

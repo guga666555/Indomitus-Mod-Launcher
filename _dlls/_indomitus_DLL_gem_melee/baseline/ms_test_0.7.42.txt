@@ -1,0 +1,111 @@
+C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms.exe
+  ammo match exe+0x92C9C0, ammo {tag} +0xEC8, linked-flag sites 89
+  shield melee: ray test exe+0x97959E hits exe+0x15B6250 ok exe+0x9795BC fail exe+0x979B57 target r12
+  draw: TakeItem order exe+0x901420, action {item} +0xC8
+  auto-draw: TagContainer ctor exe+0x565830 FromString exe+0x566B70
+  orders: eAttack vt exe+0x110C018 eAttackBasic vt exe+0x110BEB8 eFight vt exe+0x110B990
+  multi-select: ExecuteInstant exe+0xB7E7B0 in 9 vtables, apply_to_all +0x498, GetActor exe+0xB91260 (+0xF0), CanApply +0xD8, expand exe+0xB90C40
+  blow reach: table exe+0x1111510 = 17/29/35, GetBlowDistance exe+0x979C00
+  move: MakeMove exe+0x90A8C0
+  melee: eFight exe+0x8FE810
+  mode: eMovementChange exe+0x90ABF0
+  click move: exe+0x8E7F60
+  reload cancel: InventoryBusy exe+0x7E05B0 CancelInventoryOps exe+0xB86E70 GetCurrentWeapon exe+0x81B080
+  direct control: IsManualControlled exe+0x804650
+  manual-control manager: exe+0x15CBF08
+  charge: scan exe+0x970A3A..0x970F51 range exe+0x7F5870 MakeAttack exe+0x9014F0 AddOrder exe+0x8047C0
+          MakeRef exe+0xB917F0 SetEntity exe+0x852CF0 RefInit exe+0xBA2A0 TagCtor exe+0x564D50 refvt exe+0x101FD18
+          RefDtor exe+0x853240 TagDtor exe+0x565010 stamp exe+0x1584508 clock exe+0x1584568
+  refs: entity ref list at +0x198
+C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms_ed.exe
+  ammo match exe+0x7AADA0, ammo {tag} +0xEC8, linked-flag sites 95
+  shield melee: ray test exe+0x7F82ED hits exe+0x1411980 ok exe+0x7F830B fail exe+0x7F8834 target r13
+  draw: TakeItem order exe+0x77F4F0, action {item} +0xC8
+  auto-draw: TagContainer ctor exe+0x3E4E60 FromString exe+0x3E60D0
+  orders: eAttack vt exe+0xF6BF08 eAttackBasic vt exe+0xF6BDA8 eFight vt exe+0xF6B798
+  multi-select: ExecuteInstant exe+0xAA59F0 in 9 vtables, apply_to_all +0x498, GetActor exe+0xAB8CA0 (+0xF0), CanApply +0xD8, expand exe+0xAB8640
+  blow reach: table exe+0xF71368 = 17/29/35, GetBlowDistance exe+0x7F8910
+  move: MakeMove exe+0x7888F0
+  melee: eFight exe+0x77CC00
+  mode: eMovementChange exe+0x788C00
+  click move: exe+0x765FE0
+  reload cancel: InventoryBusy exe+0x659050 CancelInventoryOps exe+0xAAD6F0 GetCurrentWeapon exe+0x695600
+  direct control: IsManualControlled exe+0x67E5C0
+  manual-control manager: exe+0x142C678
+  charge: scan exe+0x7EF410..0x7EFA01 range exe+0x66EE20 MakeAttack exe+0x77F5D0 AddOrder exe+0x67E750
+          MakeRef exe+0xAB9210 SetEntity exe+0x6CE3C0 RefInit exe+0xAA2C0 TagCtor exe+0x3E4390 refvt exe+0xE9D4F8
+          RefDtor exe+0x6CE920 TagDtor exe+0x3E46E0 stamp exe+0x13DF928 clock exe+0x13DF988
+  refs: entity ref list at +0x198
+C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms_server.exe
+  ammo match exe+0x73EE60, ammo {tag} +0xEC8, linked-flag sites 86
+  shield melee: ray test exe+0x78B85E hits exe+0x11FD740 ok exe+0x78B87C fail exe+0x78BE17 target r12
+  draw: TakeItem order exe+0x713400, action {item} +0xC8
+  auto-draw: TagContainer ctor exe+0x37DEA0 FromString exe+0x37F1E0
+  orders: eAttack vt exe+0xE0A980 eAttackBasic vt exe+0xE0A820 eFight vt exe+0xE0A2F8
+  multi-select: ExecuteInstant exe+0x94D7A0 in 9 vtables, apply_to_all +0x498, GetActor exe+0x9603B0 (+0xF0), CanApply +0xD8, expand exe+0x95FD90
+  blow reach: table exe+0xE0FE70 = 17/29/35, GetBlowDistance exe+0x78BEC0
+  move: MakeMove exe+0x71C8A0
+  melee: eFight exe+0x710750
+  mode: eMovementChange exe+0x71CBD0
+  click move: exe+0x6F9C80
+  reload cancel: InventoryBusy exe+0x5F3C80 CancelInventoryOps exe+0x955E10 GetCurrentWeapon exe+0x62D900
+  direct control: IsManualControlled exe+0x617E70
+  manual-control manager: manual-control manager not found (server exe: expected)
+  charge: scan exe+0x782CCA..0x7831E1 range exe+0x609180 MakeAttack exe+0x7134D0 AddOrder exe+0x617FE0
+          MakeRef exe+0x960940 SetEntity exe+0x664DB0 RefInit exe+0x8E7A0 TagCtor exe+0x37D3C0 refvt exe+0xD5B478
+          RefDtor exe+0x665300 TagDtor exe+0x37D680 stamp exe+0x11CB9F8 clock exe+0x11CBA58
+  refs: entity ref list at +0x198
+refresh threshold: OK
+log caps per mission: same 1 reset 1 -> OK
+charge: queue 0/1 flush 0/0/1 cooldown 1 reach 1 ranged 1 stance 2 always 1 far 2 close 2 95m 3 -> OK
+0.7.41: parked entity not charged 1, entity at its recorded place passes 1 -> OK
+shield ray: shield+target 1 wall+target 0 target 1 tagged+target 1 shield-only 0 -> OK
+0.7.39: infantry seen without a charge -> vehicle 1, with a charge -> refused 1
+vehicles: no-stance 1 stance 1 inf-first 1 ordered 1 own-order 1 inf-gone 1 | auto-draw: far 1 close 1 queued 1 expired 1 -> OK
+hull contact: unmarked 1 shifted 1 expired 1 tagged 1 -> OK
+direct control: guns pass 1 no charge 1 charge after 1 normal 1 disabled 1 | manager: pass 1 no charge 1 other unit 1 | missing component: none 1 one 1 both 1 -> OK
+reload cancel: idle 1 heavy-kept 1 bolter-cancelled 1 busy-no-record 1 empty-hand 1 disabled 1 -> OK
+own tick: tick+wanted fight 1 paused 1 wrong thread 1
+fight-range stance: draw+want 1 friend-ignored 1 escalated 1
+back to the gun: held 1 asked 1 state kept 1 | range edge: stays at 130 1 leaves at 170 1
+order poll: fight 1 draw 1 blind 1 interval 1 far 1 blind-judged 1
+order picks: probe 1 melee+fight 1 jetpack-skip 1 far 1
+fight range: no-probe 1 probe 1 gun-refused 1 melee-found 1 no-reprobe 1 probe2 1 refused2 1 none 1 gun-kept 1 no-melee-wait 1 reprobe 1 | fight queued 1 ordered 1 cooldown 1 running 1 other 1 off 1 -> OK
+stale refs: listed 1 kept 1 unlisted 1 broken-list 1 zeroed 1 unmapped 1 check-off 1 -> OK
+0.7.35: fast 1 learn 1 not-fast 1 off 1 | cache add 1 hit 1 expire 1 | gate closed 1 open 1 | queue kept 1 flushed 1 -> OK
+0.7.36: player unit pick left alone 1, poll left alone 1, PlayerUnits=1 probes 1 -> OK
+0.7.37: mission wipe released 2 refs 1, 1 stale 1, table clear 1, no list offset = plain wipe 1 -> OK
+0.7.42 (a) untagged: knife vs infantry 1 vs vehicle 1 vs ordered vehicle 1 | gun 1 gun under old probe/hold 1 | no probe/hold/draw 1 | hook: knife 1 gun fast 1 | no charge 1 queued charge dropped 1 queued draw dropped 1 want dropped 1 poll left alone 1 ignored target 1 | crew 1 direct control 1 -> OK
+0.7.42 (b) melee_infantry: knife engine's choice 1 gun 1 zerg 1 zerg fight order issued 1 probed 1 | (c) stance: knife 1 vehicle 1 -> OK
+0.7.42 (e) AutoMeleeTag list 1 | may-melee cache: hit 1 tag added under the same clock 1 removed 1 -> OK
+0.7.42 (d) AutoMeleeTag empty: knife 1 ordered vehicle 1 probe 1 draw issued 1 charge issued 1 ignored target 1 -> OK
+filter: 8 cases + 3 hook cases + charge, 0 failed
+--- second pass: AutoMeleeTag="melee_infantry, MM_Test", every fake unit tagged mm_test (0.7.42): 0.7.41 results expected ---
+refresh threshold: OK
+log caps per mission: same 1 reset 1 -> OK
+charge: queue 0/1 flush 0/0/1 cooldown 1 reach 1 ranged 1 stance 2 always 1 far 2 close 2 95m 3 -> OK
+0.7.41: parked entity not charged 1, entity at its recorded place passes 1 -> OK
+shield ray: shield+target 1 wall+target 0 target 1 tagged+target 1 shield-only 0 -> OK
+0.7.39: infantry seen without a charge -> vehicle 1, with a charge -> refused 1
+vehicles: no-stance 1 stance 1 inf-first 1 ordered 1 own-order 1 inf-gone 1 | auto-draw: far 1 close 1 queued 1 expired 1 -> OK
+hull contact: unmarked 1 shifted 1 expired 1 tagged 1 -> OK
+direct control: guns pass 1 no charge 1 charge after 1 normal 1 disabled 1 | manager: pass 1 no charge 1 other unit 1 | missing component: none 1 one 1 both 1 -> OK
+reload cancel: idle 1 heavy-kept 1 bolter-cancelled 1 busy-no-record 1 empty-hand 1 disabled 1 -> OK
+own tick: tick+wanted fight 1 paused 1 wrong thread 1
+fight-range stance: draw+want 1 friend-ignored 1 escalated 1
+back to the gun: held 1 asked 1 state kept 1 | range edge: stays at 130 1 leaves at 170 1
+order poll: fight 1 draw 1 blind 1 interval 1 far 1 blind-judged 1
+order picks: probe 1 melee+fight 1 jetpack-skip 1 far 1
+fight range: no-probe 1 probe 1 gun-refused 1 melee-found 1 no-reprobe 1 probe2 1 refused2 1 none 1 gun-kept 1 no-melee-wait 1 reprobe 1 | fight queued 1 ordered 1 cooldown 1 running 1 other 1 off 1 -> OK
+stale refs: listed 1 kept 1 unlisted 1 broken-list 1 zeroed 1 unmapped 1 check-off 1 -> OK
+0.7.35: fast 1 learn 1 not-fast 1 off 1 | cache add 1 hit 1 expire 1 | gate closed 1 open 1 | queue kept 1 flushed 1 -> OK
+0.7.36: player unit pick left alone 1, poll left alone 1, PlayerUnits=1 probes 1 -> OK
+0.7.37: mission wipe released 2 refs 1, 1 stale 1, table clear 1, no list offset = plain wipe 1 -> OK
+0.7.42 (a) untagged: knife vs infantry 1 vs vehicle 1 vs ordered vehicle 1 | gun 1 gun under old probe/hold 1 | no probe/hold/draw 1 | hook: knife 1 gun fast 1 | no charge 1 queued charge dropped 1 queued draw dropped 1 want dropped 1 poll left alone 1 ignored target 1 | crew 1 direct control 1 -> OK
+0.7.42 (b) melee_infantry: knife engine's choice 1 gun 1 zerg 1 zerg fight order issued 1 probed 1 | (c) stance: knife 1 vehicle 1 -> OK
+0.7.42 (e) AutoMeleeTag list 1 | may-melee cache: hit 1 tag added under the same clock 1 removed 1 -> OK
+0.7.42 (d) AutoMeleeTag empty: knife 1 ordered vehicle 1 probe 1 draw issued 1 charge issued 1 ignored target 1 -> OK
+filter: 8 cases + 3 hook cases + charge, 0 failed
+ALL OK
+second pass (AutoMeleeTag on, every fake unit tagged): OK
+ALL OK

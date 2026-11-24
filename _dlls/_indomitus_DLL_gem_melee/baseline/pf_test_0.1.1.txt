@@ -1,0 +1,63 @@
+GEM PenFilter 0.1.1 self-test
+== C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms.exe
+  MatchAmmo exe+0x92C9C0: volume site exe+0x92CC4A, no-volume site exe+0x92CBE3 (match +0x92CC97, next +0x92CC65), tag test exe+0x565340, ammo tags +0xEC8
+  ctx builder exe+0x92C8E0 (8 MatchAmmo pairs) | enemy scan returns exe+0x970CC3 / exe+0x970E2F, weapon-stuff cast exe+0x83F1E0, list +0x1600
+  AimInfo chain call exe+0x82A74A: params exe+0x81EC40 (list +0xA0), loaded ammo exe+0x820B50, {parameters} lookup exe+0x83DE90, pen exe+0x841650, angle exe+0x7FC090, dynamic_cast exe+0xF3A598 (params exe+0x14E87A0->0x14E87E0, weapon stuff exe+0x14E8828->0x14E56E0), weapon stuff +0x98 calibre +0x1628
+  armour: block exe+0x7FC310, evaluate exe+0x7FC3A0, thickness exe+0x7FC5B0, effective exe+0x7FCA60, threshold exe+0x7FCDE0, material exe+0x7FDDF0, relation exe+0xA654B0
+  picker solver call exe+0x92B9CD -> solver exe+0x833C30 | sim clock exe+0x1584568 | eBox vtable exe+0x10E3420
+  ePolyhedron vtable exe+0x10E3540
+  picker try-loop head exe+0x92B8BA (candidates exe+0x15B3630..+8) | exhausted clear call exe+0x92BA09 -> clear exe+0x853240 | aim volume exe+0x8527C0
+  weapon stop exe+0x81F480 (aim slots +0xC8 / +0x168) | direct control test exe+0x804650
+  => hook A OK, hook B OK, hook P OK, hook X OK, facing OK, direct control test OK
+  patch test: A1 call 1, A2 jmp 1, B call 1, P jmp 1, X call 1, builder jmp 1, builder trampoline 1, targets 1, solver redirect + priority + direct control 1 -> OK
+== C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms_ed.exe
+  MatchAmmo exe+0x7AADA0: volume site exe+0x7AB02A, no-volume site exe+0x7AAFC3 (match +0x7AB077, next +0x7AB045), tag test exe+0x3E4A10, ammo tags +0xEC8
+  ctx builder exe+0x7AACC0 (8 MatchAmmo pairs) | enemy scan returns exe+0x7EF741 / exe+0x7EF8AC, weapon-stuff cast exe+0x6BA450, list +0x1600
+  AimInfo chain call exe+0x6A5420: params exe+0x699450 (list +0xA0), loaded ammo exe+0x69B440, {parameters} lookup exe+0x6B90B0, pen exe+0x6BC910, angle exe+0x6759C0, dynamic_cast exe+0xD28858 (params exe+0x1352C10->0x1352C50, weapon stuff exe+0x1352C98->0x1352CC0), weapon stuff +0x98 calibre +0x1628
+  armour: block exe+0x675C40, evaluate exe+0x675CD0, thickness exe+0x675EE0, effective exe+0x6762D0, threshold exe+0x676650, material exe+0x677650, relation exe+0x8E5650
+  picker solver call exe+0x7A9D0D -> solver exe+0x6AEB80 | sim clock exe+0x13DF988 | eBox vtable exe+0xF3C210
+  ePolyhedron vtable exe+0xF3C330
+  picker try-loop head exe+0x7A9BFA (candidates exe+0x140ED60..+8) | exhausted clear call exe+0x7A9D49 -> clear exe+0x6CE920 | aim volume exe+0x6CDE20
+  weapon stop exe+0x699CC0 (aim slots +0xC8 / +0x168) | direct control test exe+0x67E5C0
+  => hook A OK, hook B OK, hook P OK, hook X OK, facing OK, direct control test OK
+  patch test: A1 call 1, A2 jmp 1, B call 1, P jmp 1, X call 1, builder jmp 1, builder trampoline 1, targets 1, solver redirect + priority + direct control 1 -> OK
+== C:/Program Files (x86)/Steam/steamapps/common/Call to Arms - Gates of Hell/binaries/x64/call_to_arms_server.exe
+  MatchAmmo exe+0x73EE60: volume site exe+0x73F0EA, no-volume site exe+0x73F083 (match +0x73F137, next +0x73F105), tag test exe+0x37D9B0, ammo tags +0xEC8
+  ctx builder exe+0x73ED80 (8 MatchAmmo pairs) | enemy scan returns exe+0x782F53 / exe+0x7830BF, weapon-stuff cast exe+0x651DF0, list +0x1600
+  AimInfo chain call exe+0x63D2DA: params exe+0x6314C0 (list +0xA0), loaded ammo exe+0x6333D0, {parameters} lookup exe+0x650AA0, pen exe+0x653F90, angle exe+0x60F7C0, dynamic_cast exe+0xC7CAB8 (params exe+0x114A310->0x114A350, weapon stuff exe+0x114A398->0x114A3C0), weapon stuff +0x98 calibre +0x1628
+  armour: block exe+0x60FA40, evaluate exe+0x60FAD0, thickness exe+0x60FCE0, effective exe+0x610190, threshold exe+0x610510, material exe+0x611520, relation exe+0x8766C0
+  picker solver call exe+0x73DE6D -> solver exe+0x6467C0 | sim clock exe+0x11CBA58 | eBox vtable exe+0xDE1B50
+  ePolyhedron vtable exe+0xDE1C70
+  picker try-loop head exe+0x73DD5A (candidates exe+0x11FAB20..+8) | exhausted clear call exe+0x73DEA9 -> clear exe+0x665300 | aim volume exe+0x664880
+  weapon stop exe+0x631D00 (aim slots +0xC8 / +0x168) | direct control test exe+0x617E70
+  => hook A OK, hook B OK, hook P OK, hook X OK, facing OK, direct control test OK
+  patch test: A1 call 1, A2 jmp 1, B call 1, P jmp 1, X call 1, builder jmp 1, builder trampoline 1, targets 1, solver redirect + priority + direct control 1 -> OK
+stubs A/W: A2 volume-row 1 (1), A2 no-volume row no target 2 (2 = match), A1 tag hit 1 (1), A1 tag miss 0 (0), builder record ctx 1 weapon 1 r14 1 ret 1 -> OK
+AimPriority parser: custom OK, default 6 groups 33 tags -> OK
+ammo + weapon key: ammo 3C0A1E4C, with weapon 1 5BBC0B4A, with weapon 2 78F40B3D -> OK
+P stub + filter case 0 (body pierceable (current turret dropped)): ebp -1 (-1), kept 1 (1), first vol3, rdi = new end 1, cut 1 -> OK
+P stub + filter case 1 (body not, turret kept as current): ebp 0 (0), kept 1 (1), first vol1, rdi = new end 1, cut 1 -> OK
+P stub + filter case 2 (turret blocked by B -> tracks): ebp -1 (-1), kept 1 (1), first vol2, rdi = new end 1, cut 1 -> OK
+P stub + filter case 3 (nothing pierceable -> untouched): ebp 1 (1), kept 4 (4), first vol0, rdi = new end 1, cut 0 -> OK
+P stub + filter case 4 (infantry target -> untouched): ebp 1 (1), kept 4 (4), first vol0, rdi = new end 1, cut 0 -> OK
+P unreachable fallback: first body vol0, solver status 1 recorded 1, next pick vol1 (skipped 1), at 2.999 s vol1, at 3 s vol0, uncut list not recorded 1 -> OK
+B aim check: aimed body vol0 hits plate vol3 -> status 5, plate cached 1, aimed body cached 1, other weapon unaffected 1, counters 1; next pick vol1 hits it -> status 3 -> OK
+blocked-volume cache: kept 59.999 s / 5 m farther 1, safety limit 60 s 1, 20 m farther kept 1, 20 m nearer dropped 1, other volume 1, shooter 30 deg round dropped 1, 10 deg kept 1; volume frame used 1, target turned 10 deg kept 1, 30 deg dropped 1 -> OK
+verdict hold: ALLOW kept 7.999 s / 10 m farther 1, expired at 8 s 1, dropped 15.05 m farther 1, kept 20 m nearer 1, dropped out of range 1; REJECT overwrites 1, kept 20 m farther 1, dropped 20 m nearer 1 -> OK
+change-only log: first 1, repeats 0 0, change 1 (was BLOCK x3), other hook 1, change over budget 0, lines 3 -> OK
+X stub case 0 (B-caused, aimed at the target, nothing pierceable): engine clear 1, counted as exhausted 1 (1), weapon stop 1 (1), held verdict 0 (0) -> OK
+X stub case 1 (no B block (other failures)): engine clear 1, counted as exhausted 1 (1), weapon stop 0 (0), held verdict -1 (-1) -> OK
+X stub case 2 (B-caused, weapon aimed elsewhere): engine clear 1, counted as exhausted 1 (1), weapon stop 0 (0), held verdict 0 (0) -> OK
+X stub case 3 (out-of-range exit before the tries ran out): engine clear 1, counted as exhausted 0 (0), weapon stop 0 (0), held verdict -1 (-1) -> OK
+X stub case 4 (B-caused, aimed at the pierceable tracks (lower group)): engine clear 1, counted as exhausted 1 (1), weapon stop 0 (0), held verdict 1 (1) -> OK
+X stub case 5 (B-caused, aimed at the B-blocked turret, tracks pierceable): engine clear 1, counted as exhausted 1 (1), weapon stop 1 (1), held verdict 1 (1) -> OK
+X stub case 6 (B-caused, aim volume unknown, tracks pierceable): engine clear 1, counted as exhausted 1 (1), weapon stop 0 (0), held verdict 1 (1) -> OK
+X stub case 7 (B-caused, shooter taken under direct control): engine clear 1, counted as exhausted 1 (1), weapon stop 0 (0), held verdict -1 (-1) -> OK
+A stubs + verdict hold: rows 2 2 2 3 3 (2 2 2 3 3 = match match match next next), tracks volume 1 0 . 0 0 (1 0 . 0 0) -> OK
+A range state vs hold: in range 2, out of range 3, back in range 2 (2 3 2) -> OK
+A weapon key: weapon 2 2 (2, own verdict), weapon 1 3 (3, held REJECT) -> OK
+direct control: A without 3 (3), with the property 2 (2), P list untouched 4 (4), with the DD8 bit 2 (2) -> OK
+new battle: flush 1, epoch 1, caches empty 1 -> OK
+candidate compaction: kept 2, order kept 1, current follows 1 -> OK
+tag reader / stable hash: 1 1 0 -1 5EDD2C73 5EDD2C73 -> OK
+ALL OK

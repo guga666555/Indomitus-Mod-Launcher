@@ -1,0 +1,587 @@
+{
+ "files": [
+  {
+   "snapshot": "inputs/meleestance_0.7.42/src/gem_meleestance.c",
+   "port": "src/stance/stance.c",
+   "eol": "crlf",
+   "rules": [
+    {
+     "id": "S1",
+     "from": 50,
+     "to": 49,
+     "add_max": 1,
+     "why": "include core.h after ms:49 (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "c810556f9b1d517b7bb89f7fdd6abff0b6fc8dcd842d0d5016b491ab3f05e037"
+    },
+    {
+     "id": "S2a",
+     "from": 88,
+     "to": 87,
+     "add_max": 1,
+     "why": "logf_: #ifdef MS_TEST before the original body (ms:86-97 stay; logf_ block 30 = S2a 4 + S2b 26) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "d90c12bce334ef3e173139e7019f96675d6cdfe70b5f3a02ee431ce3593bdf14"
+    },
+    {
+     "id": "S2b",
+     "from": 98,
+     "to": 97,
+     "add_max": 3,
+     "why": "logf_: #else core_vlog #endif before the closing brace ms:98 (logf_ block) (WP1: add_max = the 3 line(s) the port adds)",
+     "sha256": "604348d97e3ae78d290b12ce983c6bf4eb4790c9a00742cfc0055f87362f155f"
+    },
+    {
+     "id": "S3",
+     "from": 1791,
+     "to": 1790,
+     "add_max": 2,
+     "why": "frame_hook: core_on_quant() + quant-start log_epoch before ms_tick() (spec: S3 3) (WP1: add_max = the 2 line(s) the port adds)",
+     "sha256": "41a1b9b6942e48a6cc83f4396781e27917b8dad46d5413ec385a9487a8ac30d6"
+    },
+    {
+     "id": "S4",
+     "from": 1853,
+     "to": 1857,
+     "add_max": 5,
+     "why": "H2 slot write through core_patch_ptr (spec code 5 lines + margin) (WP1: add_max = the 5 line(s) the port adds)",
+     "sha256": "b55762367aa9799d0fcae606229e4c88cda5443fdbf0d0d8cfbc5891747712e5"
+    },
+    {
+     "id": "S5",
+     "from": 1896,
+     "to": 1928,
+     "add_max": 29,
+     "why": "hb_thread -> stance_bg_step (spec: S5 40) (WP1: add_max = the 28 line(s) the port adds)",
+     "sha256": "8c8167999b5c5732557efa4f5140a83ec3b8ea54a439dc78593cafa36713ee4d"
+    },
+    {
+     "id": "S6",
+     "from": 2040,
+     "to": 2040,
+     "add_max": 1,
+     "why": "downed return + CORE_TRACE_PICK (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "9297b0765ef78d5cd312cf0899db9de2a4783b1ef7980f0a94e8c7090cc0bc7d"
+    },
+    {
+     "id": "S7",
+     "from": 2042,
+     "to": 2042,
+     "add_max": 1,
+     "why": "fast pass + CORE_TRACE_PICK (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "04dd2a61d699a02081bec9ad64de31ebc68074b4c0a0df71382b6b1204302fb8"
+    },
+    {
+     "id": "S8",
+     "from": 2045,
+     "to": 2044,
+     "add_max": 2,
+     "why": "CORE_NOTE_PICK + CORE_TRACE_PICK after ms_decide (two lines, sized like S3) (WP1: add_max = the 2 line(s) the port adds)",
+     "sha256": "da41f446ff224bb650da56bccc609b851a2cad4c627243bbc666d20f9eccd644"
+    },
+    {
+     "id": "S9",
+     "from": 1617,
+     "to": 1616,
+     "add_max": 1,
+     "why": "CORE_NOTE_FRONT in order_poll (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "b41926a7fad4ae2bae6f8e9803a2d6f7db2c93d4d97e4a70979e9ffbb4adc563"
+    },
+    {
+     "id": "S10a",
+     "from": 2272,
+     "to": 2271,
+     "add_max": 1,
+     "why": "log_epoch: g_core_seen / st_epoch_flushes / g_core_init declaration before ms:2272 (epoch block 30 = 3 + 21 + 3 + 3) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "22c251b95da5c8e22db810986b1402ab77359ccc3ade77aa49e772fbd6748aed"
+    },
+    {
+     "id": "S10b",
+     "from": 2274,
+     "to": 2274,
+     "add_max": 5,
+     "why": "log_epoch: ce / first-call / own lines, the if, the core-flush log line (ms:2275-2279 stay) (WP1: add_max = the 5 line(s) the port adds)",
+     "sha256": "999b97e6fc710dc6932ef3529d936a67a9ce6169586cb912b3abfe74b5f5e4f7"
+    },
+    {
+     "id": "S10c",
+     "from": 2280,
+     "to": 2279,
+     "add_max": 1,
+     "why": "log_epoch: st_epoch_flushes++ before the if's closing brace ms:2280 (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "b53ebbbdf7b9e2c0aa76d7842c0a3d982b6fdf455d72098a9ad9b8ea93a1a0af"
+    },
+    {
+     "id": "S10d",
+     "from": 2281,
+     "to": 2280,
+     "add_max": 1,
+     "why": "log_epoch: g_core_seen = ce; before g_epoch_last = now (ms:2281) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "5844680494d5ce91bd8b871cf25db556330c0ddc6c04cd5782900b1f0214ca16"
+    },
+    {
+     "id": "S11",
+     "from": 3093,
+     "to": 3092,
+     "add_max": 10,
+     "why": "gem_melee API block before #ifndef MS_TEST (API block) (WP1: add_max = the 10 line(s) the port adds) (0.1.11: the port diff attributes the unchanged block to the line before the blank line: from 3094 -> 3093)",
+     "sha256": "bf0a1890fc6dd44546f8085f0c68b59bd217d31ae7aaff190ed10d845bf2406e"
+    },
+    {
+     "id": "S12",
+     "from": 3107,
+     "to": 3107,
+     "add_max": 1,
+     "why": "base = core_exe_base() (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "a07cb20d0df4d2310dd6c5f0cd0c0dea1f5c5c6bd9a9eca1cc833738342d6b2c"
+    },
+    {
+     "id": "S13",
+     "from": 3150,
+     "to": 3154,
+     "add_max": 4,
+     "why": "H1 write through core_patch_code + g_installed (spec code 4 lines + margin) (WP1: add_max = the 4 line(s) the port adds)",
+     "sha256": "5d949c495d4fe16591367eef627660de2fb86a227470452eaaee48b10055f941"
+    },
+    {
+     "id": "S14",
+     "from": 3158,
+     "to": 3158,
+     "add_max": 1,
+     "why": "core_bg_register(stance_bg_step) (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "346d96a6a969bcf35131b299124147e4659d88faaa4a01f2d301fd2d163a0b47"
+    },
+    {
+     "id": "S15a",
+     "from": 3195,
+     "to": 3199,
+     "add_max": 1,
+     "why": "H5 write -> if (core_patch_code(...)) (the ON log ms:3200-3201 stays; spec code + margin) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "c5166d8cc07ff6b3bd19da76174b583c486ad384581c35fa6dc22ecf7ecee9b8"
+    },
+    {
+     "id": "S15b",
+     "from": 3202,
+     "to": 3202,
+     "add_max": 1,
+     "why": "H5: else logf_ patch refused or failed (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "1f0702f8729b4b66e6bad31ce5ef9dcfcf09384abe7ad57ed563ac4266ce70c6"
+    },
+    {
+     "id": "S16",
+     "from": 3214,
+     "to": 3220,
+     "add_max": 1,
+     "why": "H3 loop through core_patch_ptr (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "c0161fb64109d85417ab2a1a18dc10c771ddec004af8eb0ff34ec329663907da"
+    },
+    {
+     "id": "S17a",
+     "from": 3271,
+     "to": 3274,
+     "add_max": 2,
+     "why": "H4 write -> vanilla[] + if (core_patch_data(...)) (the ON log ms:3275-3277 stays; spec code + margin) (WP1: add_max = the 2 line(s) the port adds)",
+     "sha256": "a62bd11cac9a5c365cca86a000d5f3352ec5940f6a01d2bf0bf137322b30a93c"
+    },
+    {
+     "id": "S17b",
+     "from": 3278,
+     "to": 3278,
+     "add_max": 1,
+     "why": "H4: else logf_ patch refused or failed (one-line edit) (WP1: add_max = the 1 line(s) the port adds)",
+     "sha256": "15289d55cbdac45148bfa53fda3d228c5112e5a40a5c5f554a463d9c12d32770"
+    },
+    {
+     "id": "S18",
+     "from": 3283,
+     "to": 3303,
+     "add_max": 5,
+     "why": "DllMain -> stance_attach (attach block) (WP1: add_max = the 5 line(s) the port adds)",
+     "sha256": "3a7f419c4b5c65536528d5f8218932f8f6aad2e27992880b86fe252462fa96a7"
+    },
+    {
+     "id": "S19a",
+     "from": 1778,
+     "to": 1777,
+     "add_max": 1,
+     "why": "g_ms_guarded flag after ms:1777 (spec: S19a 1)",
+     "sha256": "ce8c78ae4042bfe02aa9372d3db589716b53690b58169db880ec1de1e1631747"
+    },
+    {
+     "id": "S19b",
+     "from": 1781,
+     "to": 1780,
+     "add_max": 5,
+     "why": "guarded pass-on in gem_quant_listen after ms:1780 (spec: S19b 6) (WP1: add_max = the 5 line(s) the port adds)",
+     "sha256": "cb41c037b4267841a43d9ae63a9e92718f5fd1350ac2953907a3fecf6eda59c8"
+    },
+    {
+     "id": "S20",
+     "from": 2282,
+     "to": 2281,
+     "add_max": 11,
+     "why": "REVIEW F4 (fixer, Nov 20 2026): test-only entry stance_test_frame() after log_epoch's last statement (difflib places the block, which ends with a brace, before ms:2282, log_epoch's closing brace): one frame_hook call with a fake frame function, so gem_melee_itest --epoch runs S3 (core poll + quant-start flush); never called in the dll",
+     "sha256": "bef158ebb4e0dfadaf1bb9c265ff50cf15ec6e4df6fa8f63fc1f7e1a2acb412d"
+    },
+    {
+     "id": "S21",
+     "from": 1586,
+     "to": 1585,
+     "add_max": 1,
+     "why": "STARTUP_batch (review N2, Nov 21 2026): read-only accessor stance_order_poll_state() before order_poll (ms:1586): order_poll's own early-return test (ms:1588: OrderPoll, auto-draw on, an eAttack / eAttackBasic vtable) as 1 / 0 / -1 / -2, so link's R4 attach line says 'stance order poll on' only when the poll can run; never changes a decision",
+     "sha256": "ad09dc680c969be9ab8f9929846500f8e512eab23571f9e6a4fa9ecf3928e2e2"
+    },
+    {
+     "id": "S22a",
+     "from": 2335,
+     "to": 2334,
+     "add_max": 51,
+     "why": "0.1.1 S22 (Alex, Nov 21 2026: after switching the melee stance off the Astartes kept the melee weapon until they engaged): helper block toggle_pre / toggle_gun_back in front of ms_exinst (ms:2335): the switch-on click remembers the weapon in hand in a table of its own (g_tgun: unit pointer + entity id), the switch-off click of a unit holding its melee weapon gives the take-item order for it. BEHAVIOUR CHANGE against 0.7.42, spec 10.2. | S24 review (Nov 21 2026): tgun_slot uses ptr_hash and 8 probes.",
+     "sha256": "4abbc0ca9904f5df082c795e944390b9bc382702921552bde6ddb39035489706"
+    },
+    {
+     "id": "S22b",
+     "from": 2344,
+     "to": 2343,
+     "add_max": 2,
+     "why": "0.1.1 S22 (Alex, Nov 21 2026: after switching the melee stance off the Astartes kept the melee weapon until they engaged): single-unit path, before the vanilla click (ms:2344): int b = drawact && toggle_pre(one, d)",
+     "sha256": "6fc548cef8c551699e28da9be02cbed5bb3b45afb86db67e9ddd398495458c2f"
+    },
+    {
+     "id": "S22c",
+     "from": 2346,
+     "to": 2345,
+     "add_max": 2,
+     "why": "0.1.1 S22 (Alex, Nov 21 2026: after switching the melee stance off the Astartes kept the melee weapon until they engaged): single-unit path, after the draw (ms:2346): if (b) toggle_gun_back(one)",
+     "sha256": "6d21ceac0a4ad18195e5988b6fc2186696e3c8de4714e8bc5977232193159cb5"
+    },
+    {
+     "id": "S22d",
+     "from": 2358,
+     "to": 2357,
+     "add_max": 2,
+     "why": "0.1.1 S22 (Alex, Nov 21 2026: after switching the melee stance off the Astartes kept the melee weapon until they engaged): multi-unit loop, before the vanilla click (ms:2358): int b = drawact && toggle_pre(*u, d)",
+     "sha256": "deed6b4f7a92a809d14d88f7ce4f751c6bee542d0cc6602b77360a656b18700d"
+    },
+    {
+     "id": "S22e",
+     "from": 2363,
+     "to": 2362,
+     "add_max": 2,
+     "why": "0.1.1 S22 (Alex, Nov 21 2026: after switching the melee stance off the Astartes kept the melee weapon until they engaged): multi-unit loop, after the draw (ms:2363): if (b) toggle_gun_back(*u)",
+     "sha256": "701972f4036a19b08d9f622be4e115e713dbc7aa2dbdce41b14d6cc21583e6bf"
+    },
+    {
+     "id": "S22f",
+     "from": 2174,
+     "to": 2174,
+     "add_max": 1,
+     "why": "0.1.1 S22 (second review): #define NGUNTC 32 -> 128 (ms:2174): gun_tags' weapon-name tag cache is never evicted and the toggle's switch-off click now adds names to it; when it is full ranged_back gets no tags and an AI unit keeps its melee weapon",
+     "sha256": "2ae05d5d866832394018f857c72edc1c5237b3571ee32d53c76b5b0d6c979a61"
+    },
+    {
+     "id": "S23a",
+     "from": 763,
+     "to": 762,
+     "add_max": 1,
+     "why": "0.1.1 S23 (Alex, Nov 21 2026: a stance marine sent in from far 'keeps running to the old destination to intercept nothing'): the re-aim limit of the charge run (40 units or 40 % of the distance) gets an upper bound, [Charge] MoveRefreshMaxUnits (200 = 10 m; 0 = none). Inside 500 units nothing changes. config float cfg_refresh_max in front of goal_moved (ms:763)",
+     "sha256": "1e0e8a86fdfc248d884b1bd78e26a8bb15ef9202fab948a5abe35320bd1ebc7b"
+    },
+    {
+     "id": "S23b",
+     "from": 767,
+     "to": 766,
+     "add_max": 1,
+     "why": "0.1.1 S23 (Alex, Nov 21 2026: a stance marine sent in from far 'keeps running to the old destination to intercept nothing'): the re-aim limit of the charge run (40 units or 40 % of the distance) gets an upper bound, [Charge] MoveRefreshMaxUnits (200 = 10 m; 0 = none). Inside 500 units nothing changes. the cap line in goal_moved (ms:766)",
+     "sha256": "632961db2a7e446ffa4cd71b1691d43baffc9faaeb6bd71369887d3d08bd38c9"
+    },
+    {
+     "id": "S23c",
+     "from": 3007,
+     "to": 3006,
+     "add_max": 2,
+     "why": "0.1.1 S23 (Alex, Nov 21 2026: a stance marine sent in from far 'keeps running to the old destination to intercept nothing'): the re-aim limit of the charge run (40 units or 40 % of the distance) gets an upper bound, [Charge] MoveRefreshMaxUnits (200 = 10 m; 0 = none). Inside 500 units nothing changes. the ini read (clamped to >= MoveRefreshUnits when not 0) (ms:3006)",
+     "sha256": "ba4f8348464fd9db80cf793397d0f586b59694c0c1c8705c8fc027588053e05c"
+    },
+    {
+     "id": "S23d",
+     "from": 3128,
+     "to": 3130,
+     "add_max": 2,
+     "why": "0.1.1 S23 (Alex, Nov 21 2026: a stance marine sent in from far 'keeps running to the old destination to intercept nothing'): the re-aim limit of the charge run (40 units or 40 % of the distance) gets an upper bound, [Charge] MoveRefreshMaxUnits (200 = 10 m; 0 = none). Inside 500 units nothing changes. the startup log line names the cap (format + argument line) (ms:3128)",
+     "sha256": "d964095905e3a26c4c1e9c4e46357868ab9a91388808b5c456976a8c6ee3cd39"
+    },
+    {
+     "id": "S23e",
+     "from": 3527,
+     "to": 3526,
+     "add_max": 2,
+     "why": "0.1.1 S23 (Alex, Nov 21 2026: a stance marine sent in from far 'keeps running to the old destination to intercept nothing'): the re-aim limit of the charge run (40 units or 40 % of the distance) gets an upper bound, [Charge] MoveRefreshMaxUnits (200 = 10 m; 0 = none). Inside 500 units nothing changes. self-test: the cap at 1000 units, and 0 = the old rule (same output line) (ms:3526)",
+     "sha256": "78037f5370c18445aff0533795a52a9ff15302adf96a6b0ae051d8459b11db34"
+    },
+    {
+     "id": "S24a",
+     "from": 755,
+     "to": 754,
+     "add_max": 1,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). last_t fields nolead_ms, nosmooth_ms, sm_ms, wait_ms, lead_s, run_order (ms:754)",
+     "sha256": "9e8f96fd994a35bf0c173e087753f5ed860fd648ab3ad167036861989e3c5605"
+    },
+    {
+     "id": "S24b",
+     "from": 847,
+     "to": 846,
+     "add_max": 1,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). last_reset clears them (ms:846)",
+     "sha256": "f37fd48e71818a7d9cad11aa37d24f6de85a66d2e84737e7ece23293dbbee230"
+    },
+    {
+     "id": "S24c",
+     "from": 769,
+     "to": 768,
+     "add_max": 102,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). the block: config, ptr_hash, velocity table (vel_find / vel_note / vel_known), lead_point, lead_ahead, lead_held (ms:769)",
+     "sha256": "aa05c7b73cb83c3d9a5536f8d40b018b5ebe270239b4deabf51abfa496f4d0d9"
+    },
+    {
+     "id": "S24d",
+     "from": 916,
+     "to": 915,
+     "add_max": 2,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). charge_flush: the run goal is the lead point (ms:915)",
+     "sha256": "584668cef7e905ec3d79ec7c19399afaf7967e7ec261fe12273d7f391f1b83e3"
+    },
+    {
+     "id": "S24e",
+     "from": 950,
+     "to": 949,
+     "add_max": 7,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). charge_flush: the order's lead time and run order; a stall re-order starts the hold (ms:949)",
+     "sha256": "d8ffb3c6ff291dd1426902d592c7e25bad36c8fcb1902dc85630846f67b04d58"
+    },
+    {
+     "id": "S24f",
+     "from": 957,
+     "to": 956,
+     "add_max": 3,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). charge_flush: log line under the charge line (ms:956)",
+     "sha256": "e25c489ae8a160edb1648f7b06498f5a6ee874af91009f3edd989cc1e040c2c3"
+    },
+    {
+     "id": "S24g",
+     "from": 1095,
+     "to": 1094,
+     "add_max": 1,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). charge_note: position sample of the charge target (ms:1095)",
+     "sha256": "a906e9b01630a588458f20246e62096d5e34f0d25ced26d2abe444200c4602f8"
+    },
+    {
+     "id": "S24h",
+     "from": 1146,
+     "to": 1146,
+     "add_max": 1,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). charge_note: the re-aim test is run_reaim (aim point against the goal; in-place or new-order limits) (ms:1146)",
+     "sha256": "4aad8a7a907100ba9db163047e5cbeb43ab8f9a03511afb6d5bcb6aa0a0ead4d"
+    },
+    {
+     "id": "S24i",
+     "from": 2019,
+     "to": 2018,
+     "add_max": 1,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). scan hook: position sample of the scan's target (ms:2018)",
+     "sha256": "4181a8f9aeb5788b6ad710bd8d76c70da254e04efa0088d3c53140e0cfe411c6"
+    },
+    {
+     "id": "S24j",
+     "from": 3008,
+     "to": 3007,
+     "add_max": 14,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). ini: Lead, LeadSeconds, LeadKeep, LeadRunSpeed, LeadMaxFraction, Smooth, SmoothMs, SmoothFraction (ms:3008)",
+     "sha256": "52493c8799f277098b974e83d17c2e8657db8bc7300e9cae8db877ef241e3e2f"
+    },
+    {
+     "id": "S24k",
+     "from": 3133,
+     "to": 3132,
+     "add_max": 3,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). startup lines (ms:3132)",
+     "sha256": "6c78e67dff5a577ded024e29216e1240498eb99b2dbfb12406887a58c4f126ff"
+    },
+    {
+     "id": "S24l",
+     "from": 3344,
+     "to": 3343,
+     "add_max": 8,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). self-test: move order factory and eMoveTask method fakes (ms:3343)",
+     "sha256": "a95c4a4cdf68701dc53b86caace92b2229540791550f071f29b802f148a17c77"
+    },
+    {
+     "id": "S24m",
+     "from": 3529,
+     "to": 3528,
+     "add_max": 233,
+     "why": "0.1.2 S24 (Alex, Nov 21 2026: a stance marine 'keeps running to the old destination to intercept nothing'; 'Yes, build it'): intercept lead, the far charge run at enemy infantry goes to where the enemy will be ([Charge] Lead / LeadSeconds / LeadKeep / LeadRunSpeed / LeadMaxFraction; velocity from position samples; the re-aim test checks the running order's own prediction). self-test: velocity, lead point, led run order, re-aim rules, stall hold, hash, in-place re-aim (silent unless it fails) (ms:3528)",
+     "sha256": "ca6255b1b11c8f377995692099344820152dc31ff624a2ce303570e08ac4f0ad"
+    },
+    {
+     "id": "S25a",
+     "from": 1145,
+     "to": 1144,
+     "add_max": 1,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_note: the gate of a re-aim is a variable (ms:1144)",
+     "sha256": "7c9dbca4fa45aec44b10398a49f24b73cc6b2002b2905b1c9c8cbc04b008e62a"
+    },
+    {
+     "id": "S25b",
+     "from": 1148,
+     "to": 1148,
+     "add_max": 1,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_note: uses run_reaim's answer (ms:1148)",
+     "sha256": "4b671d51bcf986fa653dcd0bac78d4eb4ab6bf02128b9b00091fe3739281a539"
+    },
+    {
+     "id": "S25c",
+     "from": 1150,
+     "to": 1150,
+     "add_max": 1,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_note: gate variable (ms:1150)",
+     "sha256": "16aaec17bb7c26954c849d9fbc313088fc1999a291fba92f17094451a85445b9"
+    },
+    {
+     "id": "S25d",
+     "from": 890,
+     "to": 889,
+     "add_max": 316,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. the block: smooth_vt, smooth_front, smooth_reaim, smooth_done, run_reaim (ms:890)",
+     "sha256": "a97a854a0990a6049aa5ed08389e8f0adddb8463d130a28fd234973904914545"
+    },
+    {
+     "id": "S25e",
+     "from": 926,
+     "to": 925,
+     "add_max": 25,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_flush: the in-place re-aim comes before a new order (ms:925)",
+     "sha256": "02d58eaf938d3086426c28060b761c456a67e754dc46f5af34bcb4c78d6c8e67"
+    },
+    {
+     "id": "S25f",
+     "from": 959,
+     "to": 958,
+     "add_max": 1,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_flush: label in front of the queue slot's release (ms:959)",
+     "sha256": "78f7ec96dbb9d5e449ccc207219469a08388fcfc9cb0701d493b0b2c06bd5754"
+    },
+    {
+     "id": "S25g",
+     "from": 943,
+     "to": 943,
+     "add_max": 2,
+     "why": "0.1.3 S25 (Alex, Nov 21 2026 on 0.1.2: 'he only updates his pos once he gets to the original location'): in-place re-aim of a running charge run (the engine's squad-follow way: front order vt[13] / vt[14] with a carrier eMoveTask), so the goal follows the aim point without a stop ([Charge] Smooth / SmoothMs / SmoothFraction); new orders under the 'hybrid' rule. charge_flush: keeps the run order's address (ms:943)",
+     "sha256": "3c7723d57aff34090813ff0c39864e87d03c09e80463b780cf1bc558b01b12cf"
+    },
+    {
+     "id": "S25h",
+     "from": 2002,
+     "to": 2002,
+     "add_max": 1,
+     "why": "0.1.4 S25: the scan hook also flushes the charge queue when the tick left in-place re-aims for it (inside the quant; the tick runs before the quant begins and the engine's path planner asserts there: ePP_Cost.cpp:386) (ms:2002)",
+     "sha256": "1c653a137cca15a700bd351e7320880548208955685961dd6444ef79fc228898"
+    },
+    {
+     "id": "S26a",
+     "from": 933,
+     "to": 932,
+     "add_max": 1,
+     "why": "0.1.6 S26 (Alex, Nov 22 2026 on the 0.1.5 log: 'Yes, build it'): a new charge order takes the place of the dll's own run order in front (AddOrder flags 5, [Charge] ReplaceOwn): after the movement change went in with the charge order's flags, the run order behind it goes in with 1, and the movement change is kept for the unit's chain (ms:932)",
+     "sha256": "573fb3d1e7335e589bb13e1dd7befbf45a42930009df1cbf7b59944cb0d2c523"
+    },
+    {
+     "id": "S26b",
+     "from": 3335,
+     "to": 3335,
+     "add_max": 2,
+     "why": "0.1.6 S26 (Alex, Nov 22 2026 on the 0.1.5 log: 'Yes, build it'): a new charge order takes the place of the dll's own run order in front (AddOrder flags 5, [Charge] ReplaceOwn): the self-test's fake AddOrder accepts flags 1 and 5 and keeps the flags of the last orders (ms:3335)",
+     "sha256": "bfd6ab3013e3d4cb3711a4ade534ab6f3a916781b0a5e110cc3c9b906258739c"
+    },
+    {
+     "id": "H1",
+     "from": 1373,
+     "to": 1372,
+     "add_max": 24,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): veh_shift: the nearest volume centre as the target point of a vehicle brain's melee match",
+     "sha256": "b8bc3411c4df583596cb9285b18248a45e4374db48ee32a2b69c3825a4f7e179"
+    },
+    {
+     "id": "H2",
+     "from": 2072,
+     "to": 2072,
+     "add_max": 5,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): ms_hook_body: the engine's match runs with veh_shift",
+     "sha256": "0a900a1f45325cb2b213f74e507780ad2e087f59e5c8280d723a0e6a2c80b54d"
+    },
+    {
+     "id": "H3",
+     "from": 3350,
+     "to": 3349,
+     "add_max": 2,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): self-test: fake core_hull_point",
+     "sha256": "441cff21f2f4dd27b0cbd1b75325e6177d52358b0ee4f45a276a2cc5504e3982"
+    },
+    {
+     "id": "H4",
+     "from": 3640,
+     "to": 3639,
+     "add_max": 35,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): self-test: veh_shift cases folded into the hull contact line",
+     "sha256": "a73d7593fff00344c4e0f79a9f67ac924f558f3d27db1a6c5aea464e4e701db2"
+    },
+    {
+     "id": "K1",
+     "from": 121,
+     "to": 120,
+     "add_max": 13,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): the cache table, its switch and counters, forward declarations of g_clock / g_sim_tid",
+     "sha256": "d9475911dd9c77db87a7749b77f812f8563082f07b510cb9ed9169dbbfe6d17e"
+    },
+    {
+     "id": "K2",
+     "from": 131,
+     "to": 131,
+     "add_max": 9,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): vec_has: cache lookup, list word lengths taken once",
+     "sha256": "6002fafabd13bf7dc08d733dd7144288996b3eb4c224e11595d096be34457ca8"
+    },
+    {
+     "id": "K3",
+     "from": 134,
+     "to": 134,
+     "add_max": 1,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): vec_has: length compare before eq_ci, result kept instead of returned",
+     "sha256": "35d620cc94ea77f9ab94c88fcf04b2802571ce2caa0e2cf05774e26305bc329c"
+    },
+    {
+     "id": "K4",
+     "from": 136,
+     "to": 136,
+     "add_max": 2,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): vec_has: the answer stored",
+     "sha256": "69adca913e90d1a9e2635e7ce30016f3b40ea46a81805f0bfc59d4ce9a5c7280"
+    },
+    {
+     "id": "K5",
+     "from": 2267,
+     "to": 2266,
+     "add_max": 1,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): new mission: the cache is cleared with the others",
+     "sha256": "f109f74ed46f5560a20548aea18c3aa11ab639c90a23fe9d7684e30c2bbde376"
+    },
+    {
+     "id": "K6",
+     "from": 3088,
+     "to": 3087,
+     "add_max": 1,
+     "why": "gem_melee 0.1.11, tag-scan cache (Alex, Nov 22 2026: \"Yes, cut the cost\"; 4.3-7.8 us per weapon pick): init_tag: the cache is cleared when the tag lists are rebuilt",
+     "sha256": "7cf580f4e35c847bc3d09db8c4bd22ca1fa1483ed6601377e9cca61f3df46870"
+    }
+   ]
+  }
+ ]
+}

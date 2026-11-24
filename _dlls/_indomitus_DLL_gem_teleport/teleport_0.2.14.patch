@@ -1,0 +1,59 @@
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,8 @@
+ **Not yet run in game** - 0.1.0 never switched on in a launcher run (see Changes).
+ 
+ ## Changes
++
++**0.2.14** (Nov 20 2026, GEM Melee): the per-quant tick (`gem_quant_listen`) is looked up in `gem_melee.dll` first, then `gem_meleestance.dll`, and the log line names the dll it registered with; nothing else changed.
+ 
+ **0.1.2** (Nov 8 2026, Alex: a squad jumped onto one point)
+ - New `{spread M}` parameter (ini `default_spread`, 0 = off): each soldier lands at a point scattered uniformly within
+--- a/gem_teleport.ini
++++ b/gem_teleport.ini
+@@ -55,7 +55,7 @@
+ ; 0.2.10 cooldown: a unit carrying this script tag is refused - {on "teleport_cooldown"} fires on it and nothing else happens.
+ ; The mod sets the tag for the cooldown time and removes it (40k_human.inc). Empty = no check
+ cooldown_tag=tp_cooldown
+-; entity script-tag vector offset (1.067: 0x4E8, the one GEM MeleeStance uses); only change after an engine update
++; entity script-tag vector offset (1.067: 0x4E8, the one GEM MeleeStance uses: gem_meleestance.dll, now gem_melee.dll); only change after an engine update
+ ent_tags=0x4E8
+ 
+ ; fire the interaction events {on "teleport_begin"} / {on "teleport_jump"} / {on "teleport_end"} on the soldier
+--- a/src/gem_teleport.c
++++ b/src/gem_teleport.c
+@@ -50,7 +50,7 @@
+ #include <stdarg.h>
+ #include <math.h>
+ 
+-#define FX_VERSION "0.2.13"
++#define FX_VERSION "0.2.14"
+ #define FX_NAME    "GEM Teleport"
+ #define FX_INI     L"\\gem_teleport.ini"
+ #define FX_LOG     L"\\gem_teleport.log"
+--- a/src/tp/teleport.c
++++ b/src/tp/teleport.c
+@@ -501,12 +501,19 @@
+     ULONGLONG now = GetTickCount64();
+     if (now - g_quantTry < 1000) return;
+     g_quantTry = now;
+-    HMODULE h = GetModuleHandleA("gem_meleestance.dll");
+-    void (*reg)(void (*)(void)) = h ? (void (*)(void (*)(void)))(void *)GetProcAddress(h, "gem_quant_listen") : NULL;
+-    if (!reg) { if (g_aimLogged < 2) { logf_("aim: gem_meleestance.dll %s - no per-quant tick, teleport_aim_end may lag until the next order", h ? "has no gem_quant_listen export" : "not loaded"); g_aimLogged++; } return; }
++    static const char *const names[2] = { "gem_melee.dll", "gem_meleestance.dll" };   /* 0.2.14: GEM Melee replaces GEM MeleeStance */
++    void (*reg)(void (*)(void)) = NULL; const char *who = NULL; int loaded = 0;
++    for (int i = 0; i < 2 && !reg; i++) {
++        HMODULE h = GetModuleHandleA(names[i]);
++        if (!h) continue;
++        loaded = 1;
++        reg = (void (*)(void (*)(void)))(void *)GetProcAddress(h, "gem_quant_listen");
++        if (reg) who = names[i];
++    }
++    if (!reg) { if (g_aimLogged < 2) { logf_("aim: gem_melee.dll / gem_meleestance.dll %s - no per-quant tick, teleport_aim_end may lag until the next order", loaded ? "has no gem_quant_listen export" : "not loaded"); g_aimLogged++; } return; }
+     reg(tp_quant);
+     g_quantReg = 1;
+-    logf_("aim: per-quant tick from GEM MeleeStance (gem_quant_listen) registered");
++    logf_("aim: per-quant tick from %s (gem_quant_listen) registered", who);
+ }
+ static void tp_aim(uint8_t *entity)
+ {

@@ -1,0 +1,481 @@
+GEM Fauna 0.12.2 (Indomitus local build, Nov 22 2026) against Guga's tag 1.0.3 (b52f719), _dlls/_indomitus_DLL_fauna 0.12.1.
+Change: the over-head marker rule (src/fx/headicon.c, fx_marker_name) works for any non-human unit whose def has a
+prop starting with icon_, not only fauna (first use: Space Marine Thunderfire, a tank-class gun, {props "icon_sm_cannon"}).
+Same alive / non-human gate as is_fauna; the prop lookup is cached per def (64-entry table with a copy of the name).
+Squad strip icon, HUD and selection stay fauna-only. Banner line LOCAL BUILD in main.c: drop or reword it for a release.
+New: tests/run_offline_check_win.py (Windows runner with zig cc), tests/win/sys/mman.h, tests/headicon_gate_test.c.
+Offline finder check passes on 1.069 call_to_arms / _ed / _server; gate test 19/19. Untested in game.
+Apply from the launcher repo root: git apply gem_fauna_0.12.2_icon_any_unit.patch
+
+diff --git a/_dlls/_indomitus_DLL_fauna/README.md b/_dlls/_indomitus_DLL_fauna/README.md
+index 610361c..97ce3a2 100644
+--- a/_dlls/_indomitus_DLL_fauna/README.md
++++ b/_dlls/_indomitus_DLL_fauna/README.md
+@@ -1,4 +1,4 @@
+-# GEM Fauna 0.10.1
++# GEM Fauna 0.12.2 (local build)
+ 
+ Engine extension DLL for Call to Arms: Gates of Hell (GEM, 1.067) that makes **fauna** - vehicle-class units whose def
+ carries `{props "fauna_main"}` - behave like infantry in the HUD and in squads. Split out of GEM ScriptExt 0.7.0 (the fauna
+@@ -25,7 +25,7 @@ fails only turns its feature off (see `gem_fauna.log`).
+ | double-click run makes a fauna sprint (the "Fast" entry of its chassis), also out of a squad and in walk mode | `fauna_double_click_sprint` | simulation |
+ | the sprint request sticks on the fauna's foot chassis: double-click run, and **Shift in direct control** (stamina still limits it) | `fauna_sprint`, `fauna_sprint_debug` | simulation |
+ | direct-control HUD: health and stamina rows (human view icons) instead of fuel and speed for fauna | `fauna_dc_hud`, `dc_health_icon`, `dc_stamina_icon`, `dc_vehicle_icon_1/2` | local (game, editor) |
+-| over-head marker (the shield) picked by a def prop: `{props "icon_<name>"}` -> `interface/scene/squad/icon_<name>_00/_01/_02` (no faction part) | `fauna_head_icon` | local (game, editor) |
++| over-head marker (the shield) picked by a def prop: `{props "icon_<name>"}` -> `interface/scene/squad/icon_<name>_00/_01/_02` (no faction part); any non-human unit, fauna or vehicle (0.12.2; fauna only before) | `fauna_head_icon` | local (game, editor) |
+ | stamina bar in the vehicle panel (`bar_stamina` / `txt_stamina` / `pnl_stamina`) for fauna with a vitality `{Stamina}` block | `fauna_stamina_bar`, `stamina_bar_name`, `stamina_text_name`, `stamina_panel_name` | local |
+ | direct control (foot chassis): a fauna walks into soldiers (ram / run over) and objects (crush) instead of stopping at their edge like a soldier; obstacles are tested with the fauna's own pather class (its obstacleID), not the soldier's | `fauna_dc_contact`, `fauna_dc_crush_objects`, `fauna_dc_pather` | **simulation** |
+ | AI-controlled fauna do not contact (ram / crush / push) allied units - enemies and neutrals only | `fauna_ai_ally_contact`, `fauna_ai_ally_contact_vehicles` | **simulation** |
+@@ -225,17 +225,22 @@ GEM Fauna runs after it: for a fauna, row 1 gets the health icon (`/interface/sc
+ row 2 the stamina icon and "cur / max" (row hidden when the def has no Stamina block). Any other vehicle gets the fuel and
+ speed icons back. No layout change is needed (the view has no XML).
+ 
+-## Over-head icon (0.8.0) - how it works
++## Over-head icon (0.8.0, any non-human since 0.12.2) - how it works
+ 
+ The marker over a unit's head is an image named by the engine's marker-name builder (found through its
+ `spectator_enemy` / `icon_vehicle` strings; called by the marker views):
+ `/interface/scene/squad/` + BASE + `(` + faction tag + `)`. For a non-human, BASE is icon_tank / icon_cannon /
+ icon_airborne / icon_helicopter from def props, else `icon_vehicle` for any vehicle-class unit (so every fauna), else
+ icon_stub; the image set adds the `_00/_01/_02` states (normal / selected / highlighted). GEM Fauna hooks the builder's
+-entry: for a fauna whose def has a prop starting with `icon_`, the whole name becomes that prop (no faction part -
+-fauna have no nationality). Example: `{props "icon_carnifex"}` -> `interface/scene/squad/icon_carnifex_00.tga`, `_01`,
+-`_02` (normal / selected / highlighted), one set for every player. Spectator icons and every other unit are
+-untouched. Replaces the 0.6.0 `squad_view_<file>` prop, which targeted the role badges (`interface/scene/squad_view/`),
++entry: for any non-human unit (fauna or vehicle; alive / in scene, flag bit 1) whose def has a prop starting with
++`icon_`, the whole name becomes that prop (no faction part - fauna have no nationality, and a vehicle names its side
++in the prop). Example: `{props "icon_carnifex"}` -> `interface/scene/squad/icon_carnifex_00.tga`, `_01`, `_02`
++(normal / selected / highlighted), one set for every player; `{props "icon_sm_cannon"}` on a gun whose props say
++`tank` -> `icon_sm_cannon_00/_01/_02` instead of `icon_tank(<faction>)`. Spectator icons, humans and units without
++such a prop are untouched. 0.8.0-0.12.1 applied it to fauna only. The prop lookup is cached per def (64-entry
++direct-mapped table holding a copy of the name, like `is_fauna`), so an ordinary vehicle costs one table probe per
++marker build after the first. Only the marker is extended: the squad strip icon (`fauna_icon_name` in ui.c), the HUD
++rows and the selection rules stay fauna-only. Replaces the 0.6.0 `squad_view_<file>` prop, which targeted the role badges (`interface/scene/squad_view/`),
+ not this marker; `src/fx/sqview.c` is no longer built and can be deleted.
+ 
+ ## Direct-control contact (0.9.0) - how it works
+@@ -290,7 +295,8 @@ SetStaminaMovementModeLimit call inside the timer (the function longer than 0x20
+ Nothing runs per frame unless a fauna is selected or in direct control. Then: the vehicle panel rows (widgets resolved
+ once per selection, bar redrawn and caption written only on change), the direct-control rows (text only on change,
+ icons only on a unit change), and the chassis speed wrappers (one cached per-def lookup for non-fauna calls). `is_fauna`
+-caches its answer per def (64-entry direct-mapped table). Orders, election, selection, bandages and the over-head icon
++caches its answer per def (64-entry direct-mapped table), and so does the over-head icon prop lookup (0.12.2). Orders,
++election, selection, bandages and the over-head icon
+ run on player actions only. All debug logs are capped and off by default.
+ 
+ ## Dodging bigger units (0.12.0)
+@@ -312,6 +318,11 @@ out. The fauna's FSM must have the vehicle "crush" transition (the vehicle FSM h
+ `dodge: fauna ... runs the vehicle crush check` the first time it is evaluated for a fauna.
+ 
+ ## History
++- 0.12.2 - LOCAL BUILD (Indomitus dev, Nov 22 2026; not in Guga's release yet): the over-head marker rule works for any
++  non-human unit whose def has an `icon_` prop, not only fauna (first use: a tank-class gun shown as a cannon,
++  `icon_sm_cannon`). Same alive / non-human gate as `is_fauna`; the prop lookup is cached per def. Log banner line
++  `LOCAL BUILD ...`. Nothing else changes. Windows test runner `tests/run_offline_check_win.py` (zig cc; finders
++  against the exes, `tests/headicon_gate_test.c` for the rule). Untested in game.
+ - 0.12.1 - game 1.068 (works on 1.067 too; no change in behaviour). That update moved things the finders had fixed:
+   the foot chassis got a virtual in the middle of its vtable and a 4-byte field before its request "kind"
+   (SetMovementMode slot 44 -> 45, kind +0x468 -> +0x46C), `Inventory::eOperation` went from 11 to 16 virtuals (the
+diff --git a/_dlls/_indomitus_DLL_fauna/gem_fauna.ini b/_dlls/_indomitus_DLL_fauna/gem_fauna.ini
+index 51cc395..07dbb9b 100644
+--- a/_dlls/_indomitus_DLL_fauna/gem_fauna.ini
++++ b/_dlls/_indomitus_DLL_fauna/gem_fauna.ini
+@@ -47,8 +47,11 @@ dc_stamina_icon=/interface/scene/human_view/stamina
+ ; icons given back when a normal vehicle is controlled again (the engine's own)
+ dc_vehicle_icon_1=/interface/scene/vehicle_view/fuel
+ dc_vehicle_icon_2=/interface/scene/vehicle_view/speed
+-; over-head marker (the shield over the head) from a def prop: {props "icon_<name>"} replaces icon_vehicle(faction):
++; over-head marker (the shield over the head) from a def prop: {props "icon_<name>"} replaces the engine's
++; icon_vehicle / icon_tank / icon_cannon ...(faction) name of any non-human unit, fauna or vehicle (0.12.2 local build;
++; 0.12.1 and older: fauna only). No faction part is added; humans and units without such a prop are untouched:
+ ; {props "icon_carnifex"} -> interface/scene/squad/icon_carnifex_00/_01/_02.tga (normal/selected/highlighted)
++; {props "icon_sm_cannon"} -> interface/scene/squad/icon_sm_cannon_00/_01/_02 (e.g. a gun whose props say tank)
+ fauna_head_icon=1
+ ; direct control (simulation): a foot-chassis fauna walks into soldiers (ram / run over) instead of stopping at their
+ ; edge like a soldier; with fauna_dc_crush_objects also into objects (fences, crates...: crush). Vehicles, other fauna,
+diff --git a/_dlls/_indomitus_DLL_fauna/src/fx/headicon.c b/_dlls/_indomitus_DLL_fauna/src/fx/headicon.c
+index b9f8b07..33b075d 100644
+--- a/_dlls/_indomitus_DLL_fauna/src/fx/headicon.c
++++ b/_dlls/_indomitus_DLL_fauna/src/fx/headicon.c
+@@ -6,9 +6,13 @@
+  *     out = "/interface/scene/squad/" + BASE + "(" + faction tag name + ")"
+  * BASE for a non-human: icon_tank / icon_cannon / icon_airborne / icon_helicopter from def props, else icon_vehicle for a
+  * vehicle-class unit, else icon_stub; the image set adds the _00/_01/_02 states. A spectator gets fixed names.
+- * For a fauna whose def has a prop starting with "icon_", that prop replaces BASE and the faction part is dropped
+- * (fauna have no nationality):
+- *     {props "icon_carnifex"}  ->  /interface/scene/squad/icon_carnifex  (files icon_carnifex_00/_01/_02)
++ * For any non-human unit (fauna or vehicle) whose def has a prop starting with "icon_", that prop replaces BASE and
++ * the faction part is dropped (fauna have no nationality; a vehicle names its side in the prop itself):
++ *     {props "icon_carnifex"}   ->  /interface/scene/squad/icon_carnifex   (files icon_carnifex_00/_01/_02)
++ *     {props "icon_sm_cannon"}  ->  /interface/scene/squad/icon_sm_cannon  (a tank-class gun shown as a cannon)
++ * 0.12.2 (local build): was fauna only. Humans, spectator names and units without such a prop are untouched.
++ * The prop lookup is cached per def (a def's props never change after load), so an ordinary vehicle costs one
++ * table probe per marker build after the first.
+  * UI only (game and editor).
+  */
+ 
+@@ -49,13 +53,34 @@ static const MsString *head_icon_prop(const uint8_t *e)
+     }
+     return NULL;
+ }
++/* the same answer cached per def (a copy of the name, so the cache never points into a def): 64-entry
++   direct-mapped table like is_fauna's; len 0 = the def has no icon_ prop. The name is written before the def key. */
++#define HEAD_ICON_CACHE_N 64
++static struct { const void *def; uint8_t len; char name[63]; } g_headIconCache[HEAD_ICON_CACHE_N];
++static size_t head_icon_name(const uint8_t *e, const char **name)
++{
++    const void *def = *(const void *const *)(e + g_entDefOff);
++    if (!def) return 0;
++    unsigned h = (unsigned)(((uintptr_t)def >> 4) % HEAD_ICON_CACHE_N);
++    if (__atomic_load_n(&g_headIconCache[h].def, __ATOMIC_ACQUIRE) != def) {
++        const MsString *prop = head_icon_prop(e);
++        __atomic_store_n(&g_headIconCache[h].def, NULL, __ATOMIC_RELEASE);
++        size_t n = prop ? prop->size : 0;                            /* < 64 by head_icon_prop */
++        if (n > sizeof g_headIconCache[h].name) n = 0;
++        if (n) memcpy(g_headIconCache[h].name, ms_cstr(prop), n);
++        g_headIconCache[h].len = (uint8_t)n;
++        __atomic_store_n(&g_headIconCache[h].def, def, __ATOMIC_RELEASE);
++    }
++    *name = g_headIconCache[h].name;
++    return g_headIconCache[h].len;
++}
+ static void *fx_marker_name(void *out, void *entity, uint8_t spectator)
+ {
+     void *r = g_markerNameOrig(out, entity, spectator);
+     uint8_t *e = entity;
+-    if (!e || (e[ENT_FLAGS] & 4) || !is_fauna(e)) return r;           /* humans: their own path; other vehicles untouched */
+-    const MsString *prop = head_icon_prop(e);
+-    if (!prop) return r;
++    if (!e || (e[ENT_FLAGS] & 4) || !(e[ENT_FLAGS] & 2)) return r;     /* humans: their own path; same alive gate as is_fauna */
++    const char *icon; size_t iconLen = head_icon_name(e, &icon);
++    if (!iconLen) return r;                                         /* no icon_ prop: engine name kept */
+     const MsString *s = out;
+     const char *p = ms_cstr(s); size_t n = s->size;
+     if (n >= 256) return r;
+@@ -66,9 +91,9 @@ static void *fx_marker_name(void *out, void *entity, uint8_t spectator)
+     size_t baseLen = paren ? (size_t)(paren - base) : n - (size_t)(base - p);
+     if (baseLen < sizeof HEAD_ICON_PREFIX - 1 || memcmp(base, HEAD_ICON_PREFIX, sizeof HEAD_ICON_PREFIX - 1)) return r;   /* spectator etc. */
+     char buf[384];
+-    int m = snprintf(buf, sizeof buf, "%.*s%.*s", (int)(base - p), p, (int)prop->size, ms_cstr(prop));   /* no faction part: fauna have none */
++    int m = snprintf(buf, sizeof buf, "%.*s%.*s", (int)(base - p), p, (int)iconLen, icon);   /* no faction part */
+     if (m <= 0 || m >= (int)sizeof buf) return r;
+-    static int logged; if (logged < 6) { logged++; logf_("head icon: fauna %p marker \"%.*s\" -> \"%s\"", e, (int)n, p, buf); }
++    static int logged; if (logged < 6) { logged++; logf_("head icon: %s %p marker \"%.*s\" -> \"%s\"", is_fauna(e) ? "fauna" : "unit", e, (int)n, p, buf); }
+     g_strAssign(out, buf, (size_t)m);
+     return r;
+ }
+diff --git a/_dlls/_indomitus_DLL_fauna/src/fx/main.c b/_dlls/_indomitus_DLL_fauna/src/fx/main.c
+index bd9ce1d..62fab02 100644
+--- a/_dlls/_indomitus_DLL_fauna/src/fx/main.c
++++ b/_dlls/_indomitus_DLL_fauna/src/fx/main.c
+@@ -19,6 +19,7 @@ static void init(HMODULE self)
+     if (g_console) { AllocConsole(); SetConsoleTitleA(FX_NAME); freopen("CONOUT$", "w", stdout); }
+     if (!get_sections()) { logf_("not a PE I understand"); return; }
+     logf_(FX_NAME " " FX_VERSION " loaded into %ls (timestamp %08X)", en, g_timestamp);
++    logf_("LOCAL BUILD (Indomitus dev, not Guga's release): 0.12.1 + over-head icon rule extended to non-fauna vehicles");
+     if (ini_int("crash_log", 1)) {
+         if (AddVectoredExceptionHandler(1, fx_veh)) logf_("crash log                      ON (fatal exceptions are written here)");
+         install_exit_hooks();
+@@ -193,7 +194,7 @@ static void init(HMODULE self)
+         } else if (g_okUi) logf_("fauna direct-control HUD        off (ini)");
+         if (g_okUi && g_wantHeadIcon) {
+             g_okHeadIcon = g_okIcons && find_head_icon() && install_head_icon();          /* needs the engine string assign (icon finders) */
+-            logf_("fauna over-head icon prop        %s", g_okHeadIcon ? "ON (def prop \"icon_<name>\" replaces icon_vehicle)" : "OFF (engine code not recognised)");
++            logf_("fauna over-head icon prop        %s", g_okHeadIcon ? "ON (def prop \"icon_<name>\" replaces the marker of any non-human)" : "OFF (engine code not recognised)");
+         } else if (g_okUi) logf_("fauna over-head icon prop        off (ini)");
+         if (g_okUi && g_wantSqSel) {
+             g_okSqSel = (g_sqSelSite || find_squad_select()) && install_squad_select();
+diff --git a/_dlls/_indomitus_DLL_fauna/src/gem_fauna.c b/_dlls/_indomitus_DLL_fauna/src/gem_fauna.c
+index a7c2035..035a15e 100644
+--- a/_dlls/_indomitus_DLL_fauna/src/gem_fauna.c
++++ b/_dlls/_indomitus_DLL_fauna/src/gem_fauna.c
+@@ -49,7 +49,7 @@
+ #include <string.h>
+ #include <stdarg.h>
+ 
+-#define FX_VERSION "0.12.1"
++#define FX_VERSION "0.12.2"
+ #define FX_NAME    "GEM Fauna"
+ #define FX_INI     L"\\gem_fauna.ini"
+ #define FX_LOG     L"\\gem_fauna.log"
+diff --git a/_dlls/_indomitus_DLL_fauna/tests/headicon_gate_test.c b/_dlls/_indomitus_DLL_fauna/tests/headicon_gate_test.c
+new file mode 100644
+index 0000000..ce2c9d8
+--- /dev/null
++++ b/_dlls/_indomitus_DLL_fauna/tests/headicon_gate_test.c
+@@ -0,0 +1,164 @@
++/* GEM Fauna - offline test of the over-head icon rule (fx_marker_name in src/fx/headicon.c)
++ * Builds the real headicon.c and fauna.c (is_fauna, def_props) against fake entities / defs / props and a fake engine
++ * marker-name builder, then checks which marker names are replaced.
++ *   default        expectations of 0.12.2: any alive non-human with an icon_ prop is replaced
++ *   -DEXPECT_0121  expectations of 0.12.1: only fauna are replaced (run against the untouched 0.12.1 source)
++ * build + run: tests/run_offline_check_win.py (zig cc, Windows target), or any gcc/clang:
++ *   cc -I src -o out/headicon_gate_test tests/headicon_gate_test.c && out/headicon_gate_test
++ */
++#include <stdio.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdarg.h>
++#ifndef FX_HEADICON_SRC
++#define FX_HEADICON_SRC "src/fx/headicon.c"
++#endif
++
++/* ---- the engine bindings headicon.c / fauna.c use (same layout as src/fx/engine.c) */
++static void logf_(const char *fmt, ...) { va_list ap; va_start(ap, fmt); printf("    log: "); vprintf(fmt, ap); va_end(ap); printf("\n"); }
++static uint8_t *g_base;
++#define EXE_OFF(p) ((unsigned long long)((const uint8_t *)(p) - g_base))
++static uint32_t g_entDefOff = 0x548;
++#define ENT_FLAGS 0x30
++typedef struct { union { char buf[16]; char *ptr; } u; size_t size, cap; } MsString;
++static const char *ms_cstr(const MsString *s) { return s->cap > 15 ? s->u.ptr : s->u.buf; }
++#define TAG_SIZE 0x60
++#define TAG_NAME 0x40
++static uint32_t g_propBegOff = 0x330, g_propEndOff = 0x338;
++static uint32_t g_actorOff, g_vitOff; static int g_okVit;
++static void **g_vtVitality;
++/* engine std::string assign */
++static void *fake_assign(void *str, const char *p, size_t n)
++{
++    MsString *s = str;
++    if (s->cap > 15) free(s->u.ptr);
++    if (n > 15) { s->u.ptr = malloc(n + 1); memcpy(s->u.ptr, p, n); s->u.ptr[n] = 0; s->cap = n; }
++    else { memcpy(s->u.buf, p, n); s->u.buf[n] = 0; s->cap = 15; }
++    s->size = n;
++    return str;
++}
++typedef void *(*StrAssignFn)(void *str, const char *p, size_t n);
++static StrAssignFn g_strAssign = fake_assign;
++/* finder / patch helpers headicon.c references (find_head_icon / install_head_icon are not run here) */
++static uint8_t *find_cstr(const char *s) { (void)s; return NULL; }
++static uint8_t *find_lea_to(const void *w, int k) { (void)w; (void)k; return NULL; }
++static uint32_t func_of(const void *a) { (void)a; return 0; }
++static int prologue_len(const uint8_t *f) { (void)f; return 0; }
++static int install_jmp5(uint8_t *f, void *h, void **o, const char *w) { (void)f; (void)h; (void)o; (void)w; return 0; }
++
++#include "fx/fauna.c"
++#include "fx/headicon.c"
++
++/* ---- fakes */
++typedef struct { uint8_t b[0x600]; } FakeDef;
++typedef struct { uint8_t b[0x600]; } FakeEnt;
++static uint8_t *make_tag(uint64_t id, const char *name)
++{
++    uint8_t *t = calloc(1, TAG_SIZE);
++    *(uint64_t *)t = id;
++    fake_assign(t + TAG_NAME, name, strlen(name));
++    return t;
++}
++static FakeDef *make_def(const char **props, int n)
++{
++    FakeDef *d = calloc(1, sizeof *d);
++    uint8_t *v = calloc(n ? n : 1, TAG_SIZE);
++    for (int i = 0; i < n; i++) {
++        uint8_t *t = make_tag(0x1000 + (uint64_t)i + (strcmp(props[i], "fauna_main") ? 0 : 0xFA00000000ull), props[i]);
++        memcpy(v + i * TAG_SIZE, t, TAG_SIZE);
++    }
++    *(uint8_t **)(d->b + g_propBegOff) = v; *(uint8_t **)(d->b + g_propEndOff) = v + n * TAG_SIZE;
++    return d;
++}
++static FakeEnt *make_ent(FakeDef *d, uint8_t flags)
++{
++    FakeEnt *e = calloc(1, sizeof *e);
++    e->b[ENT_FLAGS] = flags;
++    *(FakeDef **)(e->b + g_entDefOff) = d;
++    return e;
++}
++/* the engine builder: "/interface/scene/squad/" + BASE + "(" + faction + ")"; spectator -> fixed names */
++static const char *g_fakeBase = "icon_tank", *g_fakeFaction = "sm";
++static int g_builderCalls;
++static void *fake_builder(void *out, void *entity, uint8_t spectator)
++{
++    (void)entity; g_builderCalls++;
++    char b[256];
++    if (spectator) snprintf(b, sizeof b, "/interface/scene/squad/spectator_enemy");
++    else snprintf(b, sizeof b, "/interface/scene/squad/%s(%s)", g_fakeBase, g_fakeFaction);
++    fake_assign(out, b, strlen(b));
++    return out;
++}
++
++static int g_fail, g_n;
++static void check(const char *what, FakeEnt *e, uint8_t spectator, const char *base, const char *want)
++{
++    MsString s; memset(&s, 0, sizeof s); s.cap = 15;
++    g_fakeBase = base;
++    fx_marker_name(&s, e ? e->b : NULL, spectator);
++    int ok = !strcmp(ms_cstr(&s), want);
++    g_n++; if (!ok) g_fail++;
++    printf("  %-4s %-52s -> %s%s%s\n", ok ? "OK" : "FAIL", what, ms_cstr(&s), ok ? "" : "   WANTED ", ok ? "" : want);
++}
++
++int main(void)
++{
++    g_markerNameOrig = fake_builder;
++    g_okFauna = 1;
++    *(uint64_t *)g_tagFaunaBuf = 0xFA00000000ull + 0x1000;      /* id of "fauna_main" at index 0 of a def */
++    const char *pFaunaIcon[] = { "fauna_main", "fauna_size05", "icon_carnifex" };
++    const char *pFaunaNone[] = { "fauna_main", "fauna_size02" };
++    const char *pTankIcon[]  = { "tank", "board_astartes", "icon_sm_cannon", "squad_icon_cannon" };
++    const char *pTankNone[]  = { "tank", "board_astartes", "heavy" };
++    const char *pHumanIcon[] = { "icon_should_not_matter" };
++    const char *pIconOnly[]  = { "icon_" };                      /* prefix alone: not a name */
++    const char *pCannonIcon[] = { "cannon", "icon_my_gun" };
++    FakeDef *dFI = make_def(pFaunaIcon, 3), *dFN = make_def(pFaunaNone, 2), *dTI = make_def(pTankIcon, 4),
++            *dTN = make_def(pTankNone, 3), *dHI = make_def(pHumanIcon, 1), *dIO = make_def(pIconOnly, 1),
++            *dCI = make_def(pCannonIcon, 2), *dNone = make_def(NULL, 0);
++    /* flags: 2 alive / in scene, 4 human, 8 vehicle class */
++    FakeEnt *fauna = make_ent(dFI, 2 | 8), *faunaNo = make_ent(dFN, 2 | 8), *tank = make_ent(dTI, 2 | 8),
++            *tank2 = make_ent(dTI, 2 | 8), *tankNo = make_ent(dTN, 2 | 8), *human = make_ent(dHI, 2 | 4),
++            *iconOnly = make_ent(dIO, 2 | 8), *cannon = make_ent(dCI, 2 | 8), *noProps = make_ent(dNone, 2 | 8),
++            *deadTank = make_ent(dTI, 8), *noDef = make_ent(NULL, 2 | 8);
++#ifdef EXPECT_0121
++    const char *veh = "0.12.1 (fauna only)";
++    const char *tankWant = "/interface/scene/squad/icon_tank(sm)", *cannonWant = "/interface/scene/squad/icon_cannon(sm)";
++#else
++    const char *veh = "0.12.2 (any non-human)";
++    const char *tankWant = "/interface/scene/squad/icon_sm_cannon", *cannonWant = "/interface/scene/squad/icon_my_gun";
++#endif
++    printf("headicon gate test, expectations of %s, source " FX_HEADICON_SRC "\n", veh);
++    check("fauna + icon_carnifex", fauna, 0, "icon_vehicle", "/interface/scene/squad/icon_carnifex");
++    check("fauna, no icon_ prop", faunaNo, 0, "icon_vehicle", "/interface/scene/squad/icon_vehicle(sm)");
++    check("tank + icon_sm_cannon", tank, 0, "icon_tank", tankWant);
++    check("tank + icon_sm_cannon (second unit, same def: cache)", tank2, 0, "icon_tank", tankWant);
++    check("tank + icon_sm_cannon again (cache hit)", tank, 0, "icon_tank", tankWant);
++    check("cannon + icon_my_gun", cannon, 0, "icon_cannon", cannonWant);
++    check("tank, no icon_ prop", tankNo, 0, "icon_tank", "/interface/scene/squad/icon_tank(sm)");
++    check("tank, no icon_ prop again (cached no)", tankNo, 0, "icon_tank", "/interface/scene/squad/icon_tank(sm)");
++    check("vehicle with no props at all", noProps, 0, "icon_vehicle", "/interface/scene/squad/icon_vehicle(sm)");
++    check("prop \"icon_\" alone (no name)", iconOnly, 0, "icon_vehicle", "/interface/scene/squad/icon_vehicle(sm)");
++    check("human whose def has an icon_ prop", human, 0, "icon_stub", "/interface/scene/squad/icon_stub(sm)");
++    check("tank + icon_ prop, not alive / in scene (flag 2 off)", deadTank, 0, "icon_tank", "/interface/scene/squad/icon_tank(sm)");
++    check("vehicle without a def", noDef, 0, "icon_vehicle", "/interface/scene/squad/icon_vehicle(sm)");
++    check("tank + icon_ prop, spectator name", tank, 1, "icon_tank", "/interface/scene/squad/spectator_enemy");
++    check("fauna + icon_ prop, spectator name", fauna, 1, "icon_vehicle", "/interface/scene/squad/spectator_enemy");
++    check("no entity", NULL, 0, "icon_stub", "/interface/scene/squad/icon_stub(sm)");
++    /* two defs on the same cache slot (64 entries, (def >> 4) % 64): the answer follows the def, not the slot */
++    FakeDef *a = NULL, *b = NULL;
++    for (int i = 0; i < 4000 && !b; i++) {
++        FakeDef *d = make_def(i & 1 ? pTankNone : pTankIcon, i & 1 ? 3 : 4);
++        if (!(i & 1) && !a) { a = d; continue; }
++        if (a && (i & 1) && (((uintptr_t)d >> 4) % 64) == (((uintptr_t)a >> 4) % 64)) b = d;
++    }
++    if (a && b) {
++        FakeEnt *ea = make_ent(a, 2 | 8), *eb = make_ent(b, 2 | 8);
++        check("slot collision: def A (icon_)", ea, 0, "icon_tank", tankWant);
++        check("slot collision: def B (none), same slot", eb, 0, "icon_tank", "/interface/scene/squad/icon_tank(sm)");
++        check("slot collision: def A again", ea, 0, "icon_tank", tankWant);
++    } else printf("  (no colliding def pair found: slot collision case skipped)\n");
++    printf("%d checks, %d failed: %s\n", g_n, g_fail, g_fail ? "FAILED" : "ALL OK");
++    return g_fail != 0;
++}
+diff --git a/_dlls/_indomitus_DLL_fauna/tests/run_offline_check_win.py b/_dlls/_indomitus_DLL_fauna/tests/run_offline_check_win.py
+new file mode 100644
+index 0000000..9349761
+--- /dev/null
++++ b/_dlls/_indomitus_DLL_fauna/tests/run_offline_check_win.py
+@@ -0,0 +1,81 @@
++"""Windows counterpart of tests/run_offline_check.sh (no Linux / WSL needed), with zig cc:
++  1. build dist\\gem_fauna.dll exactly as build.bat does (+ gem_fauna.ini), and once more with -Werror
++  2. fx_test.exe (FX_TEST build; tests\\win\\sys\\mman.h maps each exe at its image base with VirtualAlloc, the test exe
++     itself is linked at another base) run against every exe given -> every finder, incl. "head icon finders"
++  3. tests\\headicon_gate_test.c against this source (0.12.2 expectations) and, if given, against an older source
++     folder with -DEXPECT_0121
++usage: python -B tests\\run_offline_check_win.py <zig.exe> <old source dir or -> <exe> [<exe> ...]
++Output goes to stdout; the caller keeps it (out\\test_output.txt).
++"""
++import os
++import subprocess
++import sys
++
++HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++WARN = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-initializers"]
++
++
++def run(args, cwd=HERE):
++    r = subprocess.run(args, cwd=cwd, capture_output=True)
++    text = (r.stdout + r.stderr).decode("utf-8", "replace")
++    return r.returncode, text
++
++
++def main():
++    zig, old, exes = sys.argv[1], sys.argv[2], sys.argv[3:]
++    ok = True
++    os.makedirs(os.path.join(HERE, "dist"), exist_ok=True)
++    os.makedirs(os.path.join(HERE, "out"), exist_ok=True)
++    print("=== 1. dll build (build.bat flags)")
++    rc, t = run([zig, "cc", "-target", "x86_64-windows-gnu", "-O2", "-s", "-shared"] + WARN +
++                ["-o", r"dist\gem_fauna.dll", r"src\gem_fauna.c", "-lkernel32", "-luser32"])
++    print("exit", rc, "| compiler output:", t.strip() or "none (no warnings)")
++    ok &= rc == 0
++    for f in os.listdir(os.path.join(HERE, "dist")):
++        if f.endswith((".lib", ".pdb")):
++            os.remove(os.path.join(HERE, "dist", f))
++    ini = open(os.path.join(HERE, "gem_fauna.ini"), "rb").read()
++    with open(os.path.join(HERE, "dist", "gem_fauna.ini.tmp"), "wb") as f:
++        f.write(ini)
++    os.replace(os.path.join(HERE, "dist", "gem_fauna.ini.tmp"), os.path.join(HERE, "dist", "gem_fauna.ini"))
++    rc, t = run([zig, "cc", "-target", "x86_64-windows-gnu", "-O2", "-shared"] + WARN + ["-Werror", "-o", r"out\werror_check.dll", r"src\gem_fauna.c", "-lkernel32", "-luser32"])
++    print("-Werror build: exit", rc, t.strip() or "(no warnings)")
++    ok &= rc == 0
++
++    print("=== 2. finder check (FX_TEST)")
++    fx = os.path.join(HERE, "out", "fx_test.exe")
++    rc, t = run([zig, "cc", "-target", "x86_64-windows-gnu", "-O1", "-DFX_TEST", "-I", r"tests\win", "-Wall", "-Wextra",
++                 "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-unused-variable",
++                 "-Wl,--image-base=0x10000000", "-o", fx, r"src\gem_fauna.c", "-lkernel32"])
++    print("fx_test build: exit", rc, t.strip() or "")
++    ok &= rc == 0
++    for exe in exes:
++        rc, t = run([fx, exe])
++        print("--- %s: exit %d" % (exe, rc))
++        print(t.rstrip())
++        ok &= rc == 0
++
++    print("=== 3. head icon gate test")
++    cases = [("this source (0.12.2)", os.path.join(HERE, "src"), [])]
++    if old != "-":
++        cases.append(("old source " + old, os.path.join(old, "src"), ["-DEXPECT_0121"]))
++    for i, (what, inc, extra) in enumerate(cases):
++        exe = os.path.join(HERE, "out", "headicon_gate_test%d.exe" % i)
++        src_name = os.path.join(inc, "fx", "headicon.c").replace("\\", "/")
++        rc, t = run([zig, "cc", "-target", "x86_64-windows-gnu", "-O1", "-Wall", "-Wextra", "-Wno-unused-parameter",
++                     "-Wno-unused-function", "-I", inc, '-DFX_HEADICON_SRC="%s"' % src_name] + extra +
++                    ["-o", exe, r"tests\headicon_gate_test.c"])
++        print("--- build against", what, ": exit", rc, t.strip() or "")
++        ok &= rc == 0
++        rc, t = run([exe])
++        print(t.rstrip())
++        ok &= rc == 0
++    for f in os.listdir(os.path.join(HERE, "out")):
++        if f.endswith((".pdb", ".lib")) or f == "werror_check.dll":
++            os.remove(os.path.join(HERE, "out", f))
++    print("RESULT:", "ALL OK" if ok else "FAILED")
++    return 0 if ok else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/_dlls/_indomitus_DLL_fauna/tests/win/sys/mman.h b/_dlls/_indomitus_DLL_fauna/tests/win/sys/mman.h
+new file mode 100644
+index 0000000..e97e1dd
+--- /dev/null
++++ b/_dlls/_indomitus_DLL_fauna/tests/win/sys/mman.h
+@@ -0,0 +1,18 @@
++/* Windows stand-in for <sys/mman.h>, only what fx_test (FX_TEST build) uses: an anonymous mapping at a fixed address
++ * (the exe's image base). Lets tests/run_offline_check_win.py run the finder check on Windows with zig cc. */
++#pragma once
++#include <stddef.h>
++#include <stdint.h>
++#define PROT_READ  1
++#define PROT_WRITE 2
++#define MAP_PRIVATE 2
++#define MAP_ANONYMOUS 0x20
++#define MAP_FIXED_NOREPLACE 0x100000
++#define MAP_FAILED ((void *)-1)
++__declspec(dllimport) void *__stdcall VirtualAlloc(void *addr, size_t size, unsigned long type, unsigned long protect);
++static void *mmap(void *addr, size_t len, int prot, int flags, int fd, long off)
++{
++    (void)prot; (void)flags; (void)fd; (void)off;
++    void *p = VirtualAlloc(addr, len, 0x3000 /* MEM_COMMIT | MEM_RESERVE */, 0x04 /* PAGE_READWRITE */);
++    return p ? p : MAP_FAILED;
++}

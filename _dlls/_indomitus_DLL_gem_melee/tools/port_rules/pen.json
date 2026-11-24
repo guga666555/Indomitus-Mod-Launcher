@@ -1,0 +1,443 @@
+{
+ "files": [
+  {
+   "snapshot": "inputs/penfilter_0.1.1/gem_penfilter.c",
+   "port": "src/pen/pen.c",
+   "eol": "lf",
+   "rules": [
+    {
+     "id": "P1",
+     "from": 71,
+     "to": 70,
+     "add_max": 1,
+     "why": "include core.h after pf:70 (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "2ac3286cd1aef9640a574ca9c162a5b2e6377344fd7c72b04502f67c7c50d233"
+    },
+    {
+     "id": "P2a",
+     "from": 103,
+     "to": 102,
+     "add_max": 1,
+     "why": "logf_: #ifdef PF_TEST before the original body (pf:101-112 stay; logf_ block 30 = P2a 4 + P2b 26) (tightened by WP3 to the port's use)",
+     "sha256": "7916ae8903703618f370e195bb2b19eb2bf8ea71eac20adc84ac8900e25c5039"
+    },
+    {
+     "id": "P2b",
+     "from": 113,
+     "to": 112,
+     "add_max": 3,
+     "why": "logf_: #else core_vlog #endif before the closing brace pf:113 (logf_ block) (tightened by WP3 to the port's use)",
+     "sha256": "3c7f68de55e0a4fa18aa3d4dc174148316425426e682e967408778619f8b8086"
+    },
+    {
+     "id": "P3a",
+     "from": 1044,
+     "to": 1044,
+     "add_max": 1,
+     "why": "epoch_check: g_core_seen / g_core_init added to the declaration (epoch block 30 = 3 + 24 + 3) (tightened by WP3 to the port's use)",
+     "sha256": "0fbc63745d48b213b7ca45aa462df9f5a4c26202bbac07e5abf6137240287a60"
+    },
+    {
+     "id": "P3b",
+     "from": 1047,
+     "to": 1047,
+     "add_max": 4,
+     "why": "epoch_check: ce / first-call lines, the if, the core-flush log line (pf:1048-1054 stay) (tightened by WP3 to the port's use)",
+     "sha256": "c75f6a015ff33dea460ff06697523cf7e4d56fbfdafbb9f873715b477afb768e"
+    },
+    {
+     "id": "P3c",
+     "from": 1056,
+     "to": 1055,
+     "add_max": 1,
+     "why": "epoch_check: g_core_seen = ce; before g_last_now = now (pf:1056) (tightened by WP3 to the port's use)",
+     "sha256": "9143b458fd5d31ebf4fdf6501ab667f4688564e2b919fd1c7d48d76041cf59c7"
+    },
+    {
+     "id": "P4",
+     "from": 1199,
+     "to": 1198,
+     "add_max": 3,
+     "why": "CORE_NOTE_VERDICT + CORE_TRACE after pf:1198 (two statements, may wrap) (tightened by WP3 to the port's use)",
+     "sha256": "4cbe62ab8afa64ab520c5745a96483caabce2d509d805ab142514b6f813c690e"
+    },
+    {
+     "id": "P5a1",
+     "from": 1260,
+     "to": 1259,
+     "add_max": 1,
+     "why": "pf_vol: CORE_TIME_BEGIN after if (!hookA_on) return 1; (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "b9745e910f42e24b7b2fe6f7323c86a479ecdc16b05a4babad57061339401dcb"
+    },
+    {
+     "id": "P5a2",
+     "from": 1270,
+     "to": 1269,
+     "add_max": 1,
+     "why": "pf_vol: CORE_TIME_END before the final return ok; (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "c1e8d1734ae3e2d63edb3804c3f1e794fd8d1d00d9832f7333c5bd5bd6334a7e"
+    },
+    {
+     "id": "P5b1",
+     "from": 1277,
+     "to": 1276,
+     "add_max": 1,
+     "why": "pf_novol: CORE_TIME_BEGIN after if (!hookA_on) return 1; (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "b7c8f1794e8b0dc9a4fbf4cd71b31db5b2c7873a1ddbd01d4bdffb36071f7fff"
+    },
+    {
+     "id": "P5b2",
+     "from": 1282,
+     "to": 1281,
+     "add_max": 1,
+     "why": "pf_novol: CORE_TIME_END before the final return ok; (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "b21e12d9bbfe0d3c399d5bbe03e5ce4ab73325de99b62e1e0439c67757340aaa"
+    },
+    {
+     "id": "P6",
+     "from": 1561,
+     "to": 1560,
+     "add_max": 2,
+     "why": "CORE_TRACE before the final unlock of pf_exhaust (one statement, may wrap) (tightened by WP3 to the port's use)",
+     "sha256": "a5c4c5ade54e0deba3b8d5c00a90d7ca466cdbc8c7c7aa6405228aa30b4248db"
+    },
+    {
+     "id": "P7",
+     "from": 1562,
+     "to": 1562,
+     "add_max": 1,
+     "why": "weapon stop through core_ceasefire (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "a02bf7becf756736f9c83fd6ebe96bb3ad9ba2c6679e416ca9d6c2127eb4429e"
+    },
+    {
+     "id": "P8",
+     "from": 1743,
+     "to": 1751,
+     "add_max": 2,
+     "why": "write_code -> core_patch_code (one-line function + margin) (tightened by WP3 to the port's use)",
+     "sha256": "3c181a2c7e128304bb2ab1677428e7e8b8c0a1e93e6e9299e098424904058009"
+    },
+    {
+     "id": "P9a",
+     "from": 1831,
+     "to": 1831,
+     "add_max": 2,
+     "why": "write_code names W / A1 / A2 (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "abd2f1db31f57a18106f6fca9fc8bd34ca60955264e62952abd328cada541ecd"
+    },
+    {
+     "id": "P9b",
+     "from": 1848,
+     "to": 1848,
+     "add_max": 1,
+     "why": "write_code name B (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "2c3f000264ffa3f923fc803e99be5e4cf87deeb649ff4cd906806d4d3404a43a"
+    },
+    {
+     "id": "P9c",
+     "from": 1865,
+     "to": 1865,
+     "add_max": 1,
+     "why": "write_code name P (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "6a77d8563e0a240435fd24c54399d41c7ba18d31a846550cf2bea4cc3b438ef9"
+    },
+    {
+     "id": "P9d",
+     "from": 1883,
+     "to": 1883,
+     "add_max": 1,
+     "why": "write_code name X (one-line edit) (tightened by WP3 to the port's use)",
+     "sha256": "5f1a2012f03393b2b18d72bff73f794799a3149ca5fe74042eeb3ff35ab58940"
+    },
+    {
+     "id": "P10",
+     "from": 1906,
+     "to": 1905,
+     "add_max": 7,
+     "why": "gem_melee API block inserted before #ifndef PF_TEST (pf:1906), after the kept blank line pf:1905 (tightened by WP3 to the port's use)",
+     "sha256": "17b6981f32d0885f95bdf1953246f0b62e4e3280739fee913e3de547bec47cf9"
+    },
+    {
+     "id": "P11a",
+     "from": 1907,
+     "to": 1912,
+     "add_max": 6,
+     "why": "stats_thread -> pen_bg_step: header, static last / 10 s due timer, block open (pf:1908 `{` kept) (tightened by WP3 to the port's use)",
+     "sha256": "b3b71085bd10d0b912d700888b2a876f1ca6532e3d0ca1364532f63c66588889"
+    },
+    {
+     "id": "P11b",
+     "from": 1914,
+     "to": 1914,
+     "add_max": 1,
+     "why": "pen_bg_step: `continue` -> `return` (pf:1913, 1915-1928 stay byte-identical) (tightened by WP3 to the port's use)",
+     "sha256": "ca2e051e820f47f3de9da3fc8d46f301a9b249b43818e303df1157032a9f9a4d"
+    },
+    {
+     "id": "P11c",
+     "from": 1930,
+     "to": 1930,
+     "add_max": 0,
+     "why": "pen_bg_step: the thread's `return 0;` deleted (pf:1929 / 1931 kept as block / function close) (tightened by WP3 to the port's use)",
+     "sha256": "298f2c0795233256d73015c2ac33893ecfd5099c0d3e19c5cd9f69bd0687f2b4"
+    },
+    {
+     "id": "P12",
+     "from": 1933,
+     "to": 1954,
+     "add_max": 6,
+     "why": "DllMain -> pen_attach (attach block) (tightened by WP3 to the port's use)",
+     "sha256": "52bb9070b064d0ca7094a49df201858dae78f36abc4bf49fbf3c9167f6d0ece0"
+    },
+    {
+     "id": "G1",
+     "from": 92,
+     "to": 91,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): DEF_PRIO: the +gun group before the tracks group",
+     "sha256": "6cf143551c2ff58754974a491575342521ee4a2118d09a94652a49c1fa6ca2dc"
+    },
+    {
+     "id": "G2",
+     "from": 95,
+     "to": 94,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): g_ptag_x / n_xtag: which AimPriority tags are +tags",
+     "sha256": "43acd261db16d407621037298b79f66ec98a35fa1ae457f4ce7dff52e0a093dd"
+    },
+    {
+     "id": "G3",
+     "from": 189,
+     "to": 189,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): parse_prio: n_xtag reset",
+     "sha256": "afccf7e9004986ff7e06b3b75c86f7d4322f08921df063d74c66341c58252f56"
+    },
+    {
+     "id": "G4",
+     "from": 194,
+     "to": 194,
+     "add_max": 2,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): parse_prio: a +tag is stored without the + and flagged",
+     "sha256": "95488dd66a5d7d2bf8eff4ae4ecd6b4b7433e1defd7b59ba867443655f0a3262"
+    },
+    {
+     "id": "G5",
+     "from": 214,
+     "to": 213,
+     "add_max": 15,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): vol_xgroup: the group of a volume carrying a +tag",
+     "sha256": "d122d8871236d1123f0b49288bfef0b4db393274f1806353be7362b55ff41f78"
+    },
+    {
+     "id": "G6",
+     "from": 786,
+     "to": 785,
+     "add_max": 2,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): stats_t: p_extra / p_xskip / s_xblk",
+     "sha256": "1f57ef68599ef843805bf0d98236d6acbe3ceafd8357d0292d2682d553ae2161"
+    },
+    {
+     "id": "G7",
+     "from": 1167,
+     "to": 1166,
+     "add_max": 8,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): vol_extra: an unbroken no_target volume that carries a +tag",
+     "sha256": "e620a0df473030ecca6c1c489ea6eb4122d2270d6b84defeb555d5da436402ba"
+    },
+    {
+     "id": "G8",
+     "from": 1174,
+     "to": 1174,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): any_volume_ok: +tag parts count for the ammo verdict",
+     "sha256": "f2b6d9cc8b648a72fa6ce53e5851130e8be57da8d277576ff7c9db3ee03f2415"
+    },
+    {
+     "id": "G9",
+     "from": 1311,
+     "to": 1310,
+     "add_max": 2,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): PICK_X",
+     "sha256": "160b0dd5cc4328a660b912974b5ade36255a7bccdced9f57ce44dd8ef1fac329"
+    },
+    {
+     "id": "G10",
+     "from": 1349,
+     "to": 1348,
+     "add_max": 20,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): pf_pick: the +tag scan (unfiltered pick only, pierceable, better group than the engine's candidates)",
+     "sha256": "34e3e40ccd5c4ce9dde19c0600b94ec0494c6b8ab831474ed3d9a6c6a02fc62f"
+    },
+    {
+     "id": "G11",
+     "from": 1351,
+     "to": 1351,
+     "add_max": 13,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): pf_pick: the +tag parts take the place of the picker's list",
+     "sha256": "a068e686bca0cfea3654818e6ddd9c045d73a28c063a49f838eb056e48c05168"
+    },
+    {
+     "id": "G12",
+     "from": 1370,
+     "to": 1369,
+     "add_max": 2,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): pf_pick: the P log line for +tag parts",
+     "sha256": "d91708e3d2ce0f2386fd89e5af1a738b03f7d4b95f1ac3844b37fc65d691c1f0"
+    },
+    {
+     "id": "G13",
+     "from": 1396,
+     "to": 1396,
+     "add_max": 6,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): pf_solve: a +tag part the solver cannot reach is blocked (blk cache), not the 3 s unreachable list",
+     "sha256": "fdfe581c79a9542f7e6645a1af1c4dcc539935c9d566a1713e55ecda436803e2"
+    },
+    {
+     "id": "G14",
+     "from": 1709,
+     "to": 1709,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): prio_desc: room for the +",
+     "sha256": "7f50e27102a369ad2e00a0cdbb02b6ff661b10f00838333c1f8bac78a7e3706b"
+    },
+    {
+     "id": "G15",
+     "from": 1711,
+     "to": 1710,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): prio_desc: + in front of a +tag",
+     "sha256": "39019b34584f5d639eb9a22cb41bf2c8165eea4c40b3e0a36dd852a830990437"
+    },
+    {
+     "id": "G16",
+     "from": 1921,
+     "to": 1921,
+     "add_max": 3,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): stats line: the +tag counters (format)",
+     "sha256": "3158ef254c66e12838710c06f587fdf8ba8844d28c3d657a367fafb2d4df5a45"
+    },
+    {
+     "id": "G17",
+     "from": 1926,
+     "to": 1926,
+     "add_max": 2,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): stats line: the +tag counters (arguments)",
+     "sha256": "8fd726487a4c97502c639d04d69263dd4eb2a7f7060fd8a9c41bd3787b221426"
+    },
+    {
+     "id": "G18",
+     "from": 2093,
+     "to": 2093,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: the fake picker vector gets its capacity field",
+     "sha256": "8714652c39480673e0e777e6354349797b08123a677ebc97bca7950fb21288b7"
+    },
+    {
+     "id": "G19",
+     "from": 2100,
+     "to": 2100,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: fk_reset_cands sets the capacity",
+     "sha256": "da0d6006f74b82fdf336ed2a74cf624b5f798b682a4642341e82ade49a2e0a56"
+    },
+    {
+     "id": "G20",
+     "from": 2125,
+     "to": 2125,
+     "add_max": 3,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: the parser case for +tags",
+     "sha256": "294f02b5d707bff691d87ff0891c996b4e31c903059a3a4c8f8a5e46739bf4f6"
+    },
+    {
+     "id": "G21",
+     "from": 2127,
+     "to": 2128,
+     "add_max": 9,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: DEF_PRIO has 7 groups / 41 tags / 8 +tags now",
+     "sha256": "f81daa9a9135d2ccf6a2280a9a2c9e7b657efab2ba22a3b35a096dd3b9200a92"
+    },
+    {
+     "id": "G22",
+     "from": 2189,
+     "to": 2188,
+     "add_max": 83,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: the +tag block (gun before tracks, filtered pick, verdict, solver failure, no +)",
+     "sha256": "e063822bf1f8fa286889bbc9c353602ae484910067f842201c637e40b658fc2a"
+    },
+    {
+     "id": "G23",
+     "from": 2131,
+     "to": 2130,
+     "add_max": 1,
+     "why": "gem_melee 0.1.9, +tag parts of AimPriority (Alex, Nov 22 2026: \"add in gun volumes before tracks\"): self-test: the real default is parsed again after the printed parser line (which keeps the 0.1.1 counts for parity P-2)",
+     "sha256": "efa8f2692f3bb14420cdfd81d6f61f6479831328d52e8ec8aa61bedb6c7cfca0"
+    },
+    {
+     "id": "H1",
+     "from": 942,
+     "to": 941,
+     "add_max": 19,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): pf_hull_point: nearest volume centre of a target",
+     "sha256": "67e1fd7fb10f3ca8b1c27a8f168699b132f4370aa50f20ab903c433af1b077f5"
+    },
+    {
+     "id": "H2",
+     "from": 1331,
+     "to": 1331,
+     "add_max": 49,
+     "why": "gem_melee 0.1.10, melee reach of vehicle-brain units against wide targets (Alex, Nov 22 2026: dreadnoughts walked up to a Baneblade and did not swing; ogryns hit a dreadnought only once it clipped into them): pf_pick: a vehicle brain's melee pick is cut to the nearest candidates",
+     "sha256": "b18a8764fb99f2c75a07fdfa285ff2143a52a6dac94f11b654fb0a28ddcbed1b"
+    },
+    {
+     "id": "M1",
+     "from": 1310,
+     "to": 1309,
+     "add_max": 5,
+     "why": "gem_melee 0.1.12 (patch_0112.py; Alex on 0.1.11: dreadnoughts still did not swing at the Baneblade): /* gem_melee 0.1.12 (Alex on 0.1.11: dreadnoughts in front of a Baneblade still did not swing): what a vehicle",
+     "sha256": "f5ff56a16dbcb381729cbe9bca289a387884fe9ea7854a4afe5cf52defbe883c"
+    },
+    {
+     "id": "M2",
+     "from": 1322,
+     "to": 1321,
+     "add_max": 2,
+     "why": "gem_melee 0.1.12 (patch_0112.py; Alex on 0.1.11: dreadnoughts still did not swing at the Baneblade): if (t_mpick == 1) MD.nocall++;                               /* gem_melee 0.1.12: the last melee pick never re",
+     "sha256": "09e0b5fefe9c5e5184182eda6a5a5306f2a79a6cc500171d6a2ca31d9267bc28"
+    },
+    {
+     "id": "M3",
+     "from": 1387,
+     "to": 1386,
+     "add_max": 6,
+     "why": "gem_melee 0.1.12 (patch_0112.py; Alex on 0.1.11: dreadnoughts still did not swing at the Baneblade): if (inpick && t_mpick) { t_mpick = 2; MD.calls++; MD.st[st & 7]++; }   /* gem_melee 0.1.12: log only */",
+     "sha256": "105d94d687c454d7db2b1b01cab03aa17a5a1905750c819ec43f2b8fe0ffd8da"
+    },
+    {
+     "id": "N1",
+     "from": 83,
+     "to": 82,
+     "add_max": 1,
+     "why": "gem_melee 0.1.12 (patch_0112b.py: MeleeForceAim): static int  cfg_mforce = 1;             /* gem_melee 0.1.12 [PenFilter] MeleeForceAim: a vehicle brain's melee",
+     "sha256": "db7e2cc0bbc4de05a479ab2897ad90abf5765766347cf86774ef1fcffd864869"
+    },
+    {
+     "id": "N2",
+     "from": 1689,
+     "to": 1688,
+     "add_max": 1,
+     "why": "gem_melee 0.1.12 (patch_0112b.py: MeleeForceAim): cfg_mforce = GI(\"MeleeForceAim\", 1);                         /* gem_melee 0.1.12 */",
+     "sha256": "80fafeb57d286721f912eb1f941d297d8a350b9a98e27c20f089d77e3d6a80b5"
+    },
+    {
+     "id": "R1",
+     "from": 1315,
+     "to": 1315,
+     "add_max": 1,
+     "why": "gem_melee 0.1.13 (patch_0113.py; Alex on 0.1.12: the flamer keeps the target, the fist is never looked at): (void)aim;",
+     "sha256": "544f5390d4be48a694d0d4c94220ff2284c9b57724c14a153de27c612a5961f7"
+    }
+   ]
+  }
+ ]
+}
