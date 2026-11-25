@@ -1,4 +1,4 @@
-/* GEM TeamSound 0.3 - per-player sound variants for Call to Arms: Gates of Hell (GEM 2, 1.067)
+/* GEM TeamSound 0.3.1 - per-player sound variants for Call to Arms: Gates of Hell (GEM 2, 1.067)
  *
  * Entity scripts play sounds with {play_sound "<link>"} and {start_sound "<path>"}. In a
  * multiplayer game every machine runs the same script, so everybody hears the same sound.
@@ -42,6 +42,11 @@
  *   getter and so the string offset; the code that builds the bot clients gives the getter + Lookup calls.
  *   Order of sources: engine record, then the script hints above (fallback), then ArmyDefault.
  *
+ * 0.3.1: the record has two ids: +0 = lobby id (BotApi.Instance.hostId, what Lookup wants; 2, 3, 4, 9 ...),
+ *   +4 = battle slot, a byte (BotApi.Instance.playerId = the actor player byte; 1..N). 0.3 gave Lookup the
+ *   battle slot and so read another player's army. The two record lists are walked here now, by slot; the
+ *   list offsets come from Lookup's code, the slot offset from the Lua property "playerId".
+ *
  * Build: build.bat   Offline finder test: build.bat test
  */
 #define WIN32_LEAN_AND_MEAN
@@ -51,7 +56,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#define TS_VERSION "0.3"
+#define TS_VERSION "0.3.1"
 
 /* ---------------------------------------------------------------- config */
 static int  cfg_enabled = 1;
@@ -154,9 +159,10 @@ static const char *pick_side(uint8_t **ctx, char *why, size_t whyn, int *is_enem
 static CRITICAL_SECTION g_cs;
 
 /* ---------------------------------------------------------------- army from the engine (0.3) */
-typedef void *(__attribute__((ms_abi)) *look_fn_t)(void *session, int player);
 static void *volatile *g_session;           /* address of the session pointer */
-static look_fn_t f_look;                    /* record = f_look(session, player index) */
+static uint8_t  *f_look;                    /* Lookup(session, lobby id): only read, for the list offsets */
+static uint32_t  o_list[2];                 /* session: the two record vectors (begin, end at +8) */
+static uint32_t  o_slot;                    /* battle slot byte in the record */
 static uint32_t  o_army;                    /* std::string army in the record */
 static int       cfg_engine = 1;
 static const char *g_eng_why = "";         /* why the engine record was not used (log) */
@@ -165,11 +171,18 @@ static const char *g_eng_why = "";         /* why the engine record was not used
 static int engine_army(uint8_t local, char *out, size_t outn)
 {
     g_eng_why = "engine lookup not found";
-    if (!cfg_engine || !g_session || !f_look || !o_army || local == 0xFF) return 0;
+    if (!cfg_engine || !g_session || !o_list[0] || !o_slot || !o_army || local == 0xFF) return 0;
     void *sess = *g_session;
     g_eng_why = "no session";
-    if (!sess || IsBadReadPtr(sess, 0x188)) return 0;
-    uint8_t *rec = (uint8_t *)f_look(sess, (int)local);
+    if (!sess || IsBadReadPtr(sess, o_list[1] + 16)) return 0;
+    uint8_t *rec = NULL;
+    for (int k = 0; k < 2 && !rec; k++) {
+        uint8_t **b = *(uint8_t ***)((uint8_t *)sess + o_list[k]);
+        uint8_t **e = *(uint8_t ***)((uint8_t *)sess + o_list[k] + 8);
+        if (!b || e <= b || e - b > 64 || IsBadReadPtr(b, (e - b) * sizeof *b)) continue;
+        for (; b < e; b++)
+            if (*b && !IsBadReadPtr(*b, o_slot + 1) && (*b)[o_slot] == local) { rec = *b; break; }
+    }
     g_eng_why = "no record for the local player";
     if (!rec || IsBadReadPtr(rec + o_army, sizeof(MsString))) return 0;
     g_eng_why = "army string empty or odd";
@@ -375,7 +388,7 @@ static const char *find_all(uint8_t *base)
 static const char *find_army(uint8_t *base)
 {
     uint8_t *tlo, *thi, *rlo, *rhi;
-    g_session = NULL; f_look = NULL; o_army = 0;
+    g_session = NULL; f_look = NULL; o_army = 0; o_slot = 0; o_list[0] = o_list[1] = 0;
     if (!section(base, ".text", &tlo, &thi) || !section(base, ".rdata", &rlo, &rhi)) return "no sections";
     /* the string "spawnPointName" */
     static const char key[] = "spawnPointName";
@@ -402,6 +415,21 @@ static const char *find_army(uint8_t *base)
         else if (getter[i] == 0x49 && getter[i + 1] == 0x8D && getter[i + 2] == 0x50) o_army = getter[i + 3];
     }
     if (!o_army || o_army > 0x2000) { o_army = 0; return "army offset not found"; }
+    /* "playerId" property: lea rcx,[rip+getter] a little before lea rdx,[rip+"playerId"];
+     * getter: mov rax,[rcx+disp8 record]; movzx eax, byte [rax+slot]; ret */
+    for (uint8_t *p = tlo + 0x60; p + 7 <= thi && !o_slot; p++) {
+        if (p[0] != 0x48 || p[1] != 0x8D || p[2] != 0x15) continue;
+        uint8_t *str = rel32(p, 7);
+        if (str < rlo || str + 9 > rhi || memcmp(str, "playerId", 9)) continue;
+        for (uint8_t *q = p - 7; q > p - 0x60; q--) {
+            if (q[0] != 0x48 || q[1] != 0x8D || q[2] != 0x0D) continue;
+            uint8_t *g = rel32(q, 7);
+            if (g < tlo || g + 9 > thi) continue;
+            if (g[0] == 0x48 && g[1] == 0x8B && g[2] == 0x41 && g[4] == 0x0F && g[5] == 0xB6 &&
+                g[6] == 0x40 && g[8] == 0xC3) { o_slot = g[7]; break; }
+        }
+    }
+    if (!o_slot) return "playerId getter not found";
     /* the code that creates the bot clients: lea reg,[rip+vtable eBotGameClient] ... call GetSession;
      * mov rcx,rax; mov edx,ebx; call Lookup */
     void **vt = find_vtable(base, ".?AVeBotGameClient@Multiplayer@@");
@@ -415,7 +443,14 @@ static const char *find_army(uint8_t *base)
             if (gs[0] != 0x48 || gs[1] != 0x8B || gs[2] != 0x05 || gs[7] != 0xC3) continue;   /* mov rax,[rip+g]; ret */
             if (lk[0] != 0x48 || lk[1] != 0x8B || lk[2] != 0x81) continue;                    /* mov rax,[rcx+disp32] */
             g_session = (void *volatile *)rel32(gs, 7);
-            f_look = (look_fn_t)lk;
+            f_look = lk;
+            /* Lookup: mov rax,[rcx+list1]; mov r8,[rcx+list1+8] ... mov rax,[rcx+list2]; mov rcx,[rcx+list2+8] */
+            uint32_t l1 = *(uint32_t *)(lk + 3), l2 = 0;
+            for (uint8_t *r = lk + 7; r < lk + 0x50 && r + 14 <= thi && !l2; r++)
+                if (r[0] == 0x48 && r[1] == 0x8B && r[2] == 0x81 && r[7] == 0x48 && r[8] == 0x8B && r[9] == 0x89 &&
+                    *(uint32_t *)(r + 10) == *(uint32_t *)(r + 3) + 8) l2 = *(uint32_t *)(r + 3);
+            if (!l1 || l1 > 0x2000 || l2 <= l1 || l2 > 0x2000) { o_army = 0; return "record lists not found"; }
+            o_list[0] = l1; o_list[1] = l2;
             return NULL;
         }
     }
@@ -475,9 +510,9 @@ static void install(void)
     }
     const char *aerr = find_army(base);
     if (aerr) logf_("[GEM TeamSound %s] army from the engine: NOT available (%s); script hints / ArmyDefault are used", TS_VERSION, aerr);
-    else logf_("[GEM TeamSound %s] army from the engine: session ptr exe+0x%llX, lookup exe+0x%llX, army string +0x%X",
+    else logf_("[GEM TeamSound %s] army from the engine: session ptr exe+0x%llX, lookup exe+0x%llX, record lists +0x%X +0x%X, slot +0x%X, army string +0x%X",
                TS_VERSION, (unsigned long long)((uint8_t *)g_session - base),
-               (unsigned long long)((uint8_t *)f_look - base), o_army);
+               (unsigned long long)(f_look - base), o_list[0], o_list[1], o_slot, o_army);
     logf_("[GEM TeamSound %s] installed | play exe+0x%llX spawn exe+0x%llX, actor flag +0x%X&%u player +0x%X, "
           "local exe+0x%llX, relation exe+0x%llX table exe+0x%llX | Enabled=%d Token=%s Own=%s Ally=%s Enemy=%s "
           "Neutral=%s UseEffector=%d Log=%d | army: hint \"%s<word>\", tokens %s %s, default %s",
@@ -539,10 +574,11 @@ int main(int argc, char **argv)
 
         const char *aerr = find_army(base);
         if (aerr) printf("  army from the engine: NOT FOUND (%s)\n", aerr);
-        else printf("  army from the engine: session ptr exe+0x%llX, lookup exe+0x%llX, army string +0x%X\n",
-                    (unsigned long long)((uint8_t *)g_session - base), (unsigned long long)((uint8_t *)f_look - base), o_army);
-        look_fn_t real_look = f_look; uint32_t real_off = o_army;
-        f_look = NULL;      /* the script-hint cases below run without the engine source */
+        else printf("  army from the engine: session ptr exe+0x%llX, lookup exe+0x%llX, record lists +0x%X +0x%X, slot +0x%X, army string +0x%X\n",
+                    (unsigned long long)((uint8_t *)g_session - base), (unsigned long long)(f_look - base),
+                    o_list[0], o_list[1], o_slot, o_army);
+        uint8_t *real_look = aerr ? NULL : f_look; uint32_t real_off = o_army;
+        o_army = 0;          /* the script-hint cases below run without the engine source */
 
         /* logic test with a fake relation table: players 0,1 = team A, 2,3 = team B */
         static int tbl[18 * 18];
@@ -593,25 +629,34 @@ int main(int argc, char **argv)
             printf("  case %zu: \"%s\" -> \"%s\" %s\n", c, cases[c].in, last_name, ok ? "OK" : "FAIL");
             if (!ok) bad = 1;
         }
-        /* the exe's own record lookup on a fake session: player 2 = "TG", player 5 = "sm" */
+        /* records as in a real 2v2: lobby ids 2, 3, 9, 10 in battle slots 1..4 */
         if (real_look) {
-            static uint8_t sess[0x200], rec2[0x400], rec5[0x400];
-            static void *list1[1], *list2[1];
+            static uint8_t sess[0x400], rec[4][0x400];
+            static void *list1[3], *list2[1];
             static void *sessp;
-            memset(sess, 0, sizeof sess); memset(rec2, 0, sizeof rec2); memset(rec5, 0, sizeof rec5);
-            *(int *)rec2 = 2; *(int *)rec5 = 5;
-            MsString *a2 = (MsString *)(rec2 + real_off), *a5 = (MsString *)(rec5 + real_off);
-            strcpy(a2->u.buf, "TG"); a2->size = 2; a2->cap = 15;
-            strcpy(a5->u.buf, "sm"); a5->size = 2; a5->cap = 15;
-            list1[0] = rec2; list2[0] = rec5;
-            *(void **)(sess + 0x160) = &list1[0]; *(void **)(sess + 0x168) = &list1[1];
-            *(void **)(sess + 0x178) = &list2[0]; *(void **)(sess + 0x180) = &list2[1];
-            sessp = sess; g_session = &sessp; f_look = real_look; o_army = real_off;
+            static const struct { int lobby; uint8_t slot; const char *army; } pl[4] =
+                { { 2, 1, "sm" }, { 3, 2, "ig" }, { 9, 3, "TG" }, { 10, 4, "tg" } };
+            memset(sess, 0, sizeof sess); memset(rec, 0, sizeof rec);
+            for (int k = 0; k < 4; k++) {
+                *(int *)rec[k] = pl[k].lobby; rec[k][o_slot] = pl[k].slot;
+                MsString *as = (MsString *)(rec[k] + real_off);
+                strcpy(as->u.buf, pl[k].army); as->size = 2; as->cap = 15;
+                if (k < 3) list1[k] = rec[k]; else list2[0] = rec[k];
+            }
+            *(void **)(sess + o_list[0]) = &list1[0]; *(void **)(sess + o_list[0] + 8) = &list1[3];
+            *(void **)(sess + o_list[1]) = &list2[0]; *(void **)(sess + o_list[1] + 8) = &list2[1];
+            sessp = sess; g_session = &sessp; o_army = real_off;
+            /* the exe's own Lookup still finds the same records by lobby id (list offsets are right) */
+            typedef void *(__attribute__((ms_abi)) *look_fn_t)(void *session, int lobby);
+            for (int k = 0; k < 4; k++)
+                if (((look_fn_t)real_look)(sess, pl[k].lobby) != rec[k]) { printf("  Lookup %d FAIL\n", pl[k].lobby); bad = 1; }
             struct { uint8_t lp, owner; const char *in, *want; } ac[] = {
-                { 2, 0, "vo_w_@who", "vo_w_enemy_tg" },      /* engine record, lower-cased */
-                { 5, 0, "vo_w_@who", "vo_w_enemy_sm" },      /* second list */
-                { 3, 0, "vo_w_@who", "vo_w_enemy_tg" },      /* no record for player 3: falls back (script word is for player 2 -> default... see below) */
-                { 5, 4, "x_@army",   "x_sm" },
+                { 3, 0, "vo_w_@who", "vo_w_enemy_tg" },      /* slot 3 = lobby 9 (0.3 read lobby 3 = ig); lower-cased */
+                { 2, 0, "vo_w_@who", "vo_w_enemy_ig" },      /* slot 2 = lobby 3 */
+                { 1, 2, "vo_w_@who", "vo_w_enemy_sm" },      /* slot 1 = lobby 2 */
+                { 4, 0, "vo_w_@who", "vo_w_enemy_tg" },      /* second list */
+                { 9, 0, "vo_w_@who", "vo_w_enemy_ig" },      /* no such slot: ArmyDefault (the script word is player 2's) */
+                { 4, 4, "x_@army",   "x_tg" },
             };
             for (size_t c = 0; c < sizeof ac / sizeof *ac; c++) {
                 local = ac[c].lp;
@@ -623,9 +668,7 @@ int main(int argc, char **argv)
                 memcpy(s->u.buf, ac[c].in, L + 1); s->cap = 15; s->size = L;
                 strcpy(last_name, "<not played>");
                 run(fake_exec, "test", action, ctx);
-                const char *want = ac[c].want;
-                if (c == 2) want = "vo_w_enemy_ig";       /* player 3: no record, script word belongs to player 2 -> ArmyDefault */
-                int ok = !strcmp(last_name, want);
+                int ok = !strcmp(last_name, ac[c].want);
                 printf("  engine case %zu: local %d \"%s\" -> \"%s\" %s\n", c, ac[c].lp, ac[c].in, last_name, ok ? "OK" : "FAIL");
                 if (!ok) bad = 1;
             }

@@ -2452,7 +2452,6 @@ static const COLORREF C_BTN_GLOW  = RGB(200, 255, 230);
 static const COLORREF C_STATUS_OK = RGB(170, 255, 220);
 static const COLORREF C_STATUS_ER = RGB(255, 170, 150);
 static const COLORREF C_PANEL     = RGB(8, 52, 20);
-static const COLORREF C_VERSION   = RGB(230, 70, 60);    // red "Dev Build vX" tag
 static const COLORREF C_ACCENT_FLAG = RGB(214, 170, 74);  // selected language frame
 
 static HWND    g_wnd;
@@ -3128,18 +3127,16 @@ static void Paint(HDC dc, const RECT& client)
         SetPixel(mem, tx + i + 1, ty + S(74), c);
     }
     TextAt(mem, g_fSub, C_TEXT_DIM, tx + S(2), ty + S(82), g_cfg.subtitle);
-    {   // "DEV BUILD  v0.5" at the right end of the title rule, in the accent colour
-        std::wstring ver = g_cfg.buildLabel;
 #ifdef DEV_BUILD
-        ver = L"DEV  " + ver;
-#endif
-        if (!g_cfg.version.empty()) ver += (ver.empty() ? L"v" : L"  v") + g_cfg.version;
-        if (!ver.empty()) {
-            int vw = TextWidth(mem, g_fSub, ver, S(1));
-            TextAt(mem, g_fSub, RGB(40, 6, 10), tx + tw + S(120) - vw + S(1), ty + S(82) + S(1), ver, S(1));  // shadow
-            TextAt(mem, g_fSub, C_VERSION,      tx + tw + S(120) - vw,        ty + S(82),        ver, S(1));
-        }
+    {   // "DEV  BUILD  v0.5" in red at the right end of the title rule. Dev builds only: the release window shows no
+        // build label or version (they stay in the caption, the exe's properties, the log and the update texts).
+        std::wstring ver = L"DEV  " + g_cfg.buildLabel;
+        if (!g_cfg.version.empty()) ver += L"  v" + g_cfg.version;
+        int vw = TextWidth(mem, g_fSub, ver, S(1));
+        TextAt(mem, g_fSub, RGB(40, 6, 10),   tx + tw + S(120) - vw + S(1), ty + S(82) + S(1), ver, S(1));  // shadow
+        TextAt(mem, g_fSub, RGB(230, 70, 60), tx + tw + S(120) - vw,        ty + S(82),        ver, S(1));
     }
+#endif
 
     // -- buttons
     for (int i = 0; i < ACT_COUNT; ++i) {

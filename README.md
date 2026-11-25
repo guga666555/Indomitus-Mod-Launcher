@@ -115,9 +115,9 @@ no list and follows the same rules. Texts: `btn_mod_list`, `st_mod_list_*`, `mod
 
 ## Versioning
 
-`version=` in `gem_launcher.ini` is the one and only version. It appears in the window, the title bar,
-the exe's file properties and `update.ini`; use it as the GitHub release tag (`v0.9.4`). The build
-warns when it is not higher than the newest git tag.
+`version=` in `gem_launcher.ini` is the one and only version. It appears in the title bar, the exe's file
+properties and `update.ini` (and, in a dev build, as a red tag in the window); use it as the GitHub release
+tag (`v0.9.4`). The build warns when it is not higher than the newest git tag.
 
 Never edit `update.ini` by hand: it is signed when it is built, and any change (even the version
 number) makes every launcher reject it.
@@ -165,7 +165,7 @@ updates signed with the official key, so a fork can never update them.
 | `show_features_button=` | 0 = hide the "Show the engine features" button |
 | `require_steam=`, `steam_autostart=`, `steam_timeout_ms=` | the Steam check before launching |
 | `update_url=`, `update_exe_url=`, `update_min_version=` | auto-update |
-| `build_label=`, `subtitle=`, `title_font=`, `title_size=` | window text |
+| `build_label=`, `subtitle=`, `title_font=`, `title_size=` | window text (`build_label`: title bar, and the red tag of a dev build) |
 | `exe=`, `editor_exe=`, `appid=`, `args=` | game location (empty = found through Steam) and extra game arguments |
 | `sound_hover=`, `sound_click=` | `embedded`, `none`, or a .wav path |
 | `wait_for_exit=` | 1 (default) = the launcher stays open, hidden, until the game exits: needed for the session log and for the host server |

@@ -1,4 +1,4 @@
-# GEM TeamSound 0.2
+# GEM TeamSound 0.3.1
 
 Lets each player hear a different sound for the same script event, e.g. "friendly support incoming" for the caller's team and "enemy support incoming" for the other team.
 
@@ -67,3 +67,10 @@ Plain dll, hooks in `DllMain`, reads `<dll name>.ini` next to it, logs to `<dll 
 - `@who` becomes `enemy_<army>` when the local player is an enemy of the entity's owner, otherwise the own / ally / neutral word. Example: `{play_sound "vo_w_@who"}` picks `vo_w_enemy_ig`, `vo_w_enemy_tg`, `vo_w_enemy_sm`, `vo_w_ally` or `vo_w_neutral`.
 - Every token in a name is replaced. ini keys: `ArmyHint`, `ArmyToken`, `WhoToken`, `ArmyDefault`.
 - Build without the ziglang pip module: `zig cc -target x86_64-windows-gnu -mcpu=baseline -O2 -shared -s -o out\gem_teamsound.dll gem_teamsound.c`.
+
+## 0.3 / 0.3.1: the army from the engine (offline-tested only)
+
+- 0.3 reads the local player's army from the multiplayer session's player record (the one behind `BotApi.Instance.army`). The script hints of 0.2 are the fallback, then `ArmyDefault`. ini `EngineArmy=1`. The editor has no bot code, so it uses the fallback there.
+- A record has two ids: dword +0 = lobby id (Lua `hostId`, what the engine's `Lookup` matches, `Game: Add player N` in game.log) and byte +4 = battle player number (Lua `playerId`, the actor player byte, `dbg: player#N`). 0.3 passed the battle number to `Lookup` and so read another player's record, or none.
+- 0.3.1 walks the two record lists itself and matches byte +4. The list offsets are read from `Lookup`'s code, the byte offset from the `playerId` getter, the army offset as before.
+- Offsets on 1.069: game session exe+0x15D6080, `Lookup` exe+0xD29170, lists +0x160 / +0x178, number +4, army string +0x128. Server session +0x121B350, `Lookup` +0xA69700, the rest the same.
